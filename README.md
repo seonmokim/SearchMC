@@ -1,4 +1,3 @@
--- INSTALL
 # Install STP
 
 STP relies on a few dependencies, namely boost, flex/bison and minisat. Installing the required header files and binaries can be achieved through the following. (Tested on Ubuntu 14.04.)
