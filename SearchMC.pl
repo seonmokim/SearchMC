@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 use strict;
-#use warnings;
+use warnings;
 use Fcntl qw(SEEK_SET SEEK_CUR SEEK_END);
 
 use POSIX 'floor', 'ceil';
@@ -51,6 +51,7 @@ my $help = '';
 my $input_type = "cnf";
 my $proj_flag = '';
 my $output_name;
+my $random_seed = undef;
 
 GetOptions ("thres=f" => \$thres,
 "cl=f"   => \$cl,
@@ -60,11 +61,16 @@ GetOptions ("thres=f" => \$thres,
 "save_CNF_files" => \$save_CNF_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \$output_name,
+"random_seed=i" => \$random_seed,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
 die "No input file!\n"
 unless @ARGV == 1;
+
+if (defined $random_seed) {
+    srand($random_seed);
+}
 
 my $filename = $ARGV[0];
 my $base_filename = basename($filename);
@@ -536,8 +542,8 @@ sub erf {
 
 sub RationalApproximation {
     my($t) = @_;
-    my @c = {2.515517, 0.802853, 0.010328};
-    my @d = {1.432788, 0.189269, 0.001308};
+    my @c = (2.515517, 0.802853, 0.010328);
+    my @d = (1.432788, 0.189269, 0.001308);
     return $t - (($c[2]*$t + $c[1])*$t + $c[0]) / ((($d[2]*$t + $d[1])*$t + $d[0])*$t + 1.0);
 }
 
