@@ -65,15 +65,19 @@ GetOptions ("thres=f" => \$thres,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
-die "No input file!\n"
-unless @ARGV == 1;
-
 if (defined $random_seed) {
     srand($random_seed);
 }
 
-my $filename = $ARGV[0];
-my $base_filename = basename($filename);
+my($filename, $base_filename);
+
+if (@ARGV == 1) {
+    $filename = $ARGV[0];
+    $base_filename = basename($filename);
+} else {
+    check_options(); # This handles -help
+    die "One non-option argument required, input file name\n";
+}
 
 mkdir ($temp_dir) unless(-d $temp_dir);
 
@@ -85,7 +89,7 @@ if($input_type eq "smt") {
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
 }
-    
+
 check_options();
 
 $table_w = 64;
@@ -100,7 +104,7 @@ $c = 1;
 
 my $sub_start = time();
 
-my $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+$nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
 $sat_cnt++;
 $exhaust_cnt++;
 
@@ -169,7 +173,7 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if($save_CNF_files == 0) {
+if(!$save_CNF_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 my $end = time();
@@ -220,8 +224,9 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (not supported)\n
-        -save_CNF_files : store all CNF files\n";
-        last;
+        -save_CNF_files : store all CNF files\n
+        -random_seed=<integer>: use repeatable random choices with given seed\n";
+        exit;
     }
     if ($cl && $thres) {
     
@@ -489,7 +494,7 @@ sub MBoundExhaustUpToC {
     
     end_solver();
    
-    if($save_CNF_files == 0) {
+    if(!$save_CNF_files) {
         unlink $filename_cons;
     }
 
