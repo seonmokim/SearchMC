@@ -2,3 +2,4 @@ simple-prob-model
 one-step
 prior*.dat
 posterior*.dat
+fit.dat

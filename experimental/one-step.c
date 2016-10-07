@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 double log_fact(double n) {
     return lgamma(n + 1);
@@ -53,6 +54,7 @@ void normalize(double *ary, int size) {
 	assert(ary[i] >= 0);
 	total += ary[i];
     }
+    assert(total > 0);
     for (i = 0; i < size; i++) {
 	ary[i] /= total;
 	assert(ary[i] >= 0 && ary[i] <= 1.0);
@@ -128,6 +130,28 @@ double prob_ge_n(int bt, int k, int n) {
     return 1.0 - prob;
 }
 
+void setup_prior_uniform(void) {
+    int i;
+    for (i = 0; i < NUM_SAMPLES; i++) {
+	prior[i] = 1.0;
+    }
+    normalize(prior, NUM_SAMPLES);
+}
+
+void setup_normal(double *ary, double mu, double sigma) {
+    int i;
+    double denom = 2 * sigma * sigma;
+    assert(denom > 0.0);
+    for (i = 0; i < NUM_SAMPLES; i++) {
+	double x = i/10.0;
+	double diff = x - mu;
+	double p = exp(-(diff*diff)/denom);
+	assert(p >= 0.0 && p <= 1.0);
+	ary[i] = p;
+    }
+    normalize(ary, NUM_SAMPLES);
+}
+
 void estimate_posterior_eq_n(int k, int n) {
     int bt;
     for (bt = 0; bt < NUM_SAMPLES; bt++) {
@@ -146,13 +170,42 @@ void estimate_posterior_ge_n(int k, int n) {
     normalize(posterior, NUM_SAMPLES);
 }
 
-void setup_prior(void) {
+double fit[NUM_SAMPLES];
+
+double calculate_error(double *a1, double *a2) {
     int i;
-    /* Uniform distribution */
+    double error = 0;
     for (i = 0; i < NUM_SAMPLES; i++) {
-	prior[i] = 1.0;
+	double diff = a1[i] - a2[i];
+	error += diff*diff;
     }
-    normalize(prior, NUM_SAMPLES);
+    return error;
+}
+
+void fit_minerror_brute(void) {
+    double best_mu = -1;
+    double best_sigma = -1;
+    double best_error = HUGE_VAL;
+    double mu, sigma, error;
+    for (mu = 0.0; mu <= 64; mu += 0.1) {
+	/* mu values outside [0, 64] would also be possible to consider,
+	   but the combination of a out-of-bounds mu and a small sigma
+	   can cause all the in-bounds probabilities to underflow to 0,
+	   which needs to be avoided. */
+	for (sigma = 0.1; sigma < 100; sigma += 0.1) {
+	    setup_normal(fit, mu, sigma);
+	    error = calculate_error(posterior, fit);
+	    if (error < best_error) {
+		/* printf("Improved error to %g with mu=%f, sigma=%f\n",
+		       error, mu, sigma); */
+		best_mu = mu;
+		best_sigma = sigma;
+		best_error = error;
+	    }
+	}
+    }
+    printf("Best fit: mu = %f, sigma = %f\n", best_mu, best_sigma);
+    setup_normal(fit, best_mu, best_sigma);
 }
 
 void gnuplot_data(const char *fname, double *ary, int size) {
@@ -167,39 +220,116 @@ void gnuplot_data(const char *fname, double *ary, int size) {
     assert(res == 0);
 }
 
+#define PRIOR_UNIFORM 0
+#define PRIOR_NORMAL 1 /* truncated normal, to be precise */
+
+int prior_type = PRIOR_UNIFORM;
+
+#define UPDATE_EXACT 0
+#define UPDATE_ATLEAST 1
+
+int update_mode = UPDATE_EXACT;
+
+int nSat = 0;
+int k = 1;
+
+double mu = 32;
+double sigma = 18;
+
 int main(int argc, char **argv) {
-    setup_prior();
+    int i;
+    for (i = 1; i < argc; i++) {
+	if (!strcmp(argv[i], "-prior") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    if (!strcmp(arg, "uniform")) {
+		prior_type = PRIOR_UNIFORM;
+	    } else if (!strcmp(arg, "normal")) {
+		prior_type = PRIOR_NORMAL;
+	    } else {
+		fprintf(stderr, "Unrecognized -prior type: "
+			"should be uniform or normal\n");
+		exit(1);
+	    }
+	} else if (!strcmp(argv[i], "-mu")) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    double val = strtod(arg, &endptr);
+	    if (endptr == arg) {
+		fprintf(stderr, "Argument to -mu should be a number\n");
+		exit(1);
+	    }
+	    mu = val;
+	} else if (!strcmp(argv[i], "-sigma")) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    double val = strtod(arg, &endptr);
+	    if (endptr == arg) {
+		fprintf(stderr, "Argument to -sigma should be a number\n");
+		exit(1);
+	    }
+	    sigma = val;
+	} else if (!strcmp(argv[i], "-nSat")) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    long val = strtol(arg, &endptr, 0);
+	    if (endptr == arg || arg < 0) {
+		fprintf(stderr, "Argument to -nSat should be "
+			"a non-negative integer\n");
+		exit(1);
+	    }
+	    nSat = val;
+	    update_mode = UPDATE_EXACT;
+	} else if (!strcmp(argv[i], "-nSatGE")) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    long val = strtol(arg, &endptr, 0);
+	    if (endptr == arg || arg < 0) {
+		fprintf(stderr, "Argument to -nSatGE should be "
+			"a non-negative integer\n");
+		exit(1);
+	    }
+	    nSat = val;
+	    update_mode = UPDATE_ATLEAST;
+	} else if (!strcmp(argv[i], "-k")) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    long val = strtol(arg, &endptr, 0);
+	    if (endptr == arg || arg < 0) {
+		fprintf(stderr, "Argument to -k should be "
+			"a non-negative integer\n");
+		exit(1);
+	    }
+	    k = val;
+	} else {
+	    fprintf(stderr, "Urecognized option `%s'\n", argv[i]);
+	    exit(1);
+	}
+    }
+
+    if (prior_type == PRIOR_UNIFORM) {
+	setup_prior_uniform();
+    } else if (prior_type == PRIOR_NORMAL) {
+	setup_normal(prior, mu, sigma);
+    } else {
+	assert(0);
+    }
+
     gnuplot_data("prior.dat", prior, NUM_SAMPLES);
     printf("Prior mean is %g\n", mean_pdf(prior));
     printf("Prior stddev is %g\n", stddev_pdf(prior));
-    estimate_posterior_eq_n(32, 0);
-    gnuplot_data("posterior0.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat = 0) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat = 0) stddev is %g\n", stddev_pdf(posterior));
-    estimate_posterior_eq_n(32, 1);
-    gnuplot_data("posterior1.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat = 1) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat = 1) stddev is %g\n", stddev_pdf(posterior));
-    estimate_posterior_eq_n(32, 2);
-    gnuplot_data("posterior2.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat = 2) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat = 2) stddev is %g\n", stddev_pdf(posterior));
-    estimate_posterior_eq_n(32, 10);
-    gnuplot_data("posterior10.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat = 10) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat = 10) stddev is %g\n", stddev_pdf(posterior));
 
-    estimate_posterior_ge_n(32, 1);
-    gnuplot_data("posterior_ge1.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat >= 1) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat >= 1) stddev is %g\n", stddev_pdf(posterior));
-    estimate_posterior_ge_n(32, 2);
-    gnuplot_data("posterior_ge2.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat >= 2) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat >= 2) stddev is %g\n", stddev_pdf(posterior));
-    estimate_posterior_ge_n(32, 10);
-    gnuplot_data("posterior_ge10.dat", posterior, NUM_SAMPLES);
-    printf("Posterior(nSat >= 10) mean is %g\n", mean_pdf(posterior));
-    printf("Posterior(nSat >= 10) stddev is %g\n", stddev_pdf(posterior));
+    if (update_mode == UPDATE_EXACT) {
+	estimate_posterior_eq_n(k, nSat);
+    } else if (update_mode == UPDATE_ATLEAST) {
+	estimate_posterior_ge_n(k, nSat);
+    }
+
+    gnuplot_data("posterior.dat", posterior, NUM_SAMPLES);
+    printf("Posterior mean is %g\n", mean_pdf(posterior));
+    printf("Posterior stddev is %g\n", stddev_pdf(posterior));
+
+    fit_minerror_brute();
+    gnuplot_data("fit.dat", fit, NUM_SAMPLES);
+
     return 0;
 }
