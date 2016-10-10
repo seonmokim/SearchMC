@@ -5,5 +5,6 @@ posterior*.dat
 fit.dat
 conf_inter_test
 inv_cdf_test
-minerror.dat
-minsigma.dat
+minerror*.dat
+minsigma*.dat
+moments*.dat
