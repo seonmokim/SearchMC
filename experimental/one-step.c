@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asa241.h"
+
 double log_fact(double n) {
     return lgamma(n + 1);
 }
@@ -187,6 +189,7 @@ void fit_minerror_brute(void) {
     double best_sigma = -1;
     double best_error = HUGE_VAL;
     double mu, sigma, error;
+    printf("Minimum error search:");
     for (mu = 0.0; mu <= 64; mu += 0.1) {
 	/* mu values outside [0, 64] would also be possible to consider,
 	   but the combination of a out-of-bounds mu and a small sigma
@@ -203,8 +206,123 @@ void fit_minerror_brute(void) {
 		best_error = error;
 	    }
 	}
+	if (mu - floor(mu) < 0.00001) {
+	    putchar('.');
+	    fflush(stdout);
+	}
     }
-    printf("Best fit: mu = %f, sigma = %f\n", best_mu, best_sigma);
+    putchar('\n');
+    printf("Minimum error fit: mu = %f, sigma = %f\n", best_mu, best_sigma);
+    setup_normal(fit, best_mu, best_sigma);
+}
+
+double norm_cdf(double x) {
+    return 0.5*erfc(-x/sqrt(2));
+}
+
+double norm_inv_cdf(double p) {
+    return r8_normal_01_cdf_inverse(p);
+}
+
+void trunc_norm_conf_interval(double mu, double sigma, double bound, double cl,
+			      double *lowerp, double *upperp) {
+    double denom1 = sqrt(2)*sigma;
+    double integral = 0.5*(erf((bound - mu)/denom1) - erf(-mu/denom1));
+    double norm = 1/integral;
+    double ci_factor = norm_inv_cdf((cl/norm + 1)/2);
+    double ci_sigma = ci_factor * sigma;
+
+    double normal_upper = mu + ci_sigma;
+    double normal_lower = mu - ci_sigma;
+
+    double modif_upper =
+	mu + sigma*norm_inv_cdf(cl/norm + norm_cdf(-mu/sigma));
+    double modif_lower =
+	mu + sigma*norm_inv_cdf(norm_cdf((bound-mu)/sigma) - cl/norm);
+
+    double upper, lower;
+    if (cl == 1.0) {
+	upper = bound;
+	lower = 0;
+    } else if (mu > bound/2.0 && mu <= bound) {
+	if (normal_upper <= bound) {
+	    upper = normal_upper;
+	    lower = normal_lower;
+	} else {
+	    upper = bound;
+	    lower = modif_lower;
+	}
+    } else if (mu <= bound/2.0 && mu >= 0) {
+	if (normal_lower >= 0) {
+	    upper = normal_upper;
+	    lower = normal_lower;
+	} else {
+	    upper = modif_upper;
+	    lower = 0;
+	}
+    } else if (mu > bound) {
+	upper = bound;
+	lower = modif_lower;
+    } else {
+	assert(mu < 0);
+	upper = modif_upper;
+	lower = 0;
+    }
+    assert(lower >= 0 && lower <= bound);
+    assert(upper >= 0 && upper <= bound);
+    assert(lower <= upper);
+    *lowerp = lower;
+    *upperp = upper;
+}
+
+double sum_pdf(double *ary, double min, double max) {
+    int start = floor(min * 10);
+    int end = ceil(max * 10);
+    double sum = 0;
+    int i;
+    assert(min <= max);
+    assert(start <= end);
+    for (i = start; i <= end; i++) {
+	sum += ary[i];
+    }
+    assert(sum >= 0 && sum < 1.0001);
+    return sum;
+}
+
+void fit_minsigma_brute(void) {
+    double best_mu = -1;
+    double best_sigma = HUGE_VAL;
+    double mu, sigma;
+
+    for (mu = 0.0; mu <= 64; mu += 0.1) {
+	for (sigma = 0.1; sigma < 100; sigma += 0.1) {
+	    int cl_i;
+	    int is_good = 1;
+	    for (cl_i = 1; cl_i < 100; cl_i++) {
+		double norm_lower, norm_upper;
+		double cl = cl_i/100.0;
+		double post_sum;
+		trunc_norm_conf_interval(mu, sigma, 64, cl,
+					 &norm_lower, &norm_upper);
+		post_sum = sum_pdf(posterior, norm_lower, norm_upper);
+		if (cl > post_sum) {
+		    /* printf("sigma = %f is over-confident "
+			   "at %d%% (%f vs. %f)\n",
+			   sigma, cl_i, cl, post_sum); */
+		    is_good = 0;
+		    break;
+		}
+	    }
+	    if (is_good)
+		break;
+	}
+	if (sigma < best_sigma) {
+	    printf("For mu = %f, best safe sigma is %f\n", mu, sigma);
+	    best_sigma = sigma;
+	    best_mu = mu;
+	}
+    }
+    printf("Minimum safe sigma is %f, for mu = %f\n", best_sigma, best_mu);
     setup_normal(fit, best_mu, best_sigma);
 }
 
@@ -328,8 +446,11 @@ int main(int argc, char **argv) {
     printf("Posterior mean is %g\n", mean_pdf(posterior));
     printf("Posterior stddev is %g\n", stddev_pdf(posterior));
 
+    fit_minsigma_brute();
+    gnuplot_data("minsigma.dat", fit, NUM_SAMPLES);
+
     fit_minerror_brute();
-    gnuplot_data("fit.dat", fit, NUM_SAMPLES);
+    gnuplot_data("minerror.dat", fit, NUM_SAMPLES);
 
     return 0;
 }
