@@ -45,6 +45,7 @@ double log_choose_small_k(double n, int k) {
 
 #define MAX_INFL 64
 #define NUM_SAMPLES (10*MAX_INFL)
+#define NUM_SAMPLESF (10.0*MAX_INFL)
 
 double prior[NUM_SAMPLES];
 double posterior[NUM_SAMPLES];
@@ -75,7 +76,7 @@ double mean_pdf(double *ary) {
     return total;
 }
 
-double stddev_pdf(double *ary) {
+double variance_pdf(double *ary) {
     int i;
     double total_x = 0, total_xx = 0;
     for (i = 0; i < NUM_SAMPLES; i++) {
@@ -83,7 +84,11 @@ double stddev_pdf(double *ary) {
 	total_x += x*ary[i];
 	total_xx += x*x*ary[i];
     }
-    return sqrt(total_xx - total_x*total_x);
+    return total_xx - total_x*total_x;
+}
+
+double stddev_pdf(double *ary) {
+    return sqrt(variance_pdf(ary));
 }
 
 double prob_eq_n(int bt, int k, int n) {
@@ -154,6 +159,19 @@ void setup_normal(double *ary, double mu, double sigma) {
     normalize(ary, NUM_SAMPLES);
 }
 
+void setup_beta(double *ary, double a, double b) {
+    int i;
+    assert(a > 0);
+    assert(b > 0);
+    double scale = (NUM_SAMPLES-1)/(NUM_SAMPLESF*NUM_SAMPLESF);
+    for (i = 0; i < NUM_SAMPLES; i++) {
+	double x = (i + 0.5)*scale;
+	double p = pow(x, a-1)*pow(1 - x, b - 1);
+	ary[i] = p;
+    }
+    normalize(ary, NUM_SAMPLES);
+}
+
 void estimate_posterior_eq_n(int k, int n) {
     int bt;
     for (bt = 0; bt < NUM_SAMPLES; bt++) {
@@ -184,12 +202,12 @@ double calculate_error(double *a1, double *a2) {
     return error;
 }
 
-void fit_minerror_brute(void) {
+void fit_minerror_norm_brute(void) {
     double best_mu = -1;
     double best_sigma = -1;
     double best_error = HUGE_VAL;
     double mu, sigma, error;
-    printf("Minimum error search:");
+    printf("Minimum error (truncated normal) search:");
     for (mu = 0.0; mu <= 64; mu += 0.1) {
 	/* mu values outside [0, 64] would also be possible to consider,
 	   but the combination of a out-of-bounds mu and a small sigma
@@ -214,6 +232,47 @@ void fit_minerror_brute(void) {
     putchar('\n');
     printf("Minimum error fit: mu = %f, sigma = %f\n", best_mu, best_sigma);
     setup_normal(fit, best_mu, best_sigma);
+}
+
+void fit_minerror_beta_brute(void) {
+    double best_a = -1;
+    double best_b = -1;
+    double best_error = HUGE_VAL;
+    double a, b, error;
+    printf("Minimum error (beta) search:");
+    for (a = 0.1; a <= 100; a += 0.1) {
+	for (b = 0.1; b <= 100; b += 0.1) {
+	    setup_beta(fit, a, b);
+	    error = calculate_error(posterior, fit);
+	    if (error < best_error) {
+		/* printf("Improved error to %g with mu=%f, sigma=%f\n",
+		       error, mu, sigma); */
+		best_a = a;
+		best_b = b;
+		best_error = error;
+	    }
+	}
+	if (a - floor(a) < 0.00001) {
+	    putchar('.');
+	    fflush(stdout);
+	}
+    }
+    putchar('\n');
+    printf("Minimum error fit: a = %f, b = %f\n", best_a, best_b);
+    setup_beta(fit, best_a, best_b);
+}
+
+void fit_moments_beta(void) {
+    double mean = mean_pdf(posterior);
+    double var = variance_pdf(posterior);
+    double mean01 = mean/64.0;
+    double var01 = var/(64.0*64.0);
+    double mean1m = mean01*(1.0 - mean01);
+    double diff = mean1m/var01 - 1.0;
+    double a = mean01*diff;
+    double b = (1.0 - mean01)*diff;
+    printf("Method of moments fit: a = %f, b = %f\n", a, b);
+    setup_beta(fit, a, b);
 }
 
 double norm_cdf(double x) {
@@ -295,7 +354,7 @@ void fit_minsigma_brute(void) {
     double mu, sigma;
 
     for (mu = 0.0; mu <= 64; mu += 0.1) {
-	for (sigma = 0.1; sigma < 100; sigma += 0.1) {
+	for (sigma = 0.1; sigma < 100; sigma += 0.001) {
 	    int cl_i;
 	    int is_good = 1;
 	    for (cl_i = 1; cl_i < 100; cl_i++) {
@@ -314,6 +373,8 @@ void fit_minsigma_brute(void) {
 		}
 	    }
 	    if (is_good)
+		break;
+	    else if (sigma > best_sigma)
 		break;
 	}
 	if (sigma < best_sigma) {
@@ -340,8 +401,20 @@ void gnuplot_data(const char *fname, double *ary, int size) {
 
 #define PRIOR_UNIFORM 0
 #define PRIOR_NORMAL 1 /* truncated normal, to be precise */
+#define PRIOR_BETA 2
 
 int prior_type = PRIOR_UNIFORM;
+
+#define POSTERIOR_NORMAL 1 /* truncated normal, to be precise */
+#define POSTERIOR_BETA 2
+#define MAX_POSTERIOR 3
+
+#define FITNESS_MINERROR 0
+#define FITNESS_MINSIGMA 1
+#define FITNESS_MOMENTS 2
+#define MAX_FITNESS 3
+
+int todo[MAX_FITNESS][MAX_POSTERIOR];
 
 #define UPDATE_EXACT 0
 #define UPDATE_ATLEAST 1
@@ -354,6 +427,9 @@ int k = 1;
 double mu = 32;
 double sigma = 18;
 
+double a = 2;
+double b = 2;
+
 int main(int argc, char **argv) {
     int i;
     for (i = 1; i < argc; i++) {
@@ -363,12 +439,49 @@ int main(int argc, char **argv) {
 		prior_type = PRIOR_UNIFORM;
 	    } else if (!strcmp(arg, "normal")) {
 		prior_type = PRIOR_NORMAL;
+	    } else if (!strcmp(arg, "beta")) {
+		prior_type = PRIOR_BETA;
 	    } else {
 		fprintf(stderr, "Unrecognized -prior type: "
-			"should be uniform or normal\n");
+			"should be uniform, normal, or beta\n");
 		exit(1);
 	    }
-	} else if (!strcmp(argv[i], "-mu")) {
+	} else if (!strcmp(argv[i], "-minerror") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    if (!strcmp(arg, "normal")) {
+		todo[FITNESS_MINERROR][POSTERIOR_NORMAL] = 1;
+	    } else if (!strcmp(arg, "beta")) {
+		todo[FITNESS_MINERROR][POSTERIOR_BETA] = 1;
+	    } else {
+		fprintf(stderr, "Unrecognized -minerror type: "
+			"should be normal or beta\n");
+		exit(1);
+	    }
+	} else if (!strcmp(argv[i], "-minsigma") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    if (!strcmp(arg, "normal")) {
+		todo[FITNESS_MINSIGMA][POSTERIOR_NORMAL] = 1;
+	    } else if (!strcmp(arg, "beta")) {
+		todo[FITNESS_MINSIGMA][POSTERIOR_BETA] = 1;
+		assert(0); /* unimplemented */
+	    } else {
+		fprintf(stderr, "Unrecognized -minsigma type: "
+			"should be normal or beta\n");
+		exit(1);
+	    }
+	} else if (!strcmp(argv[i], "-moments") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    if (!strcmp(arg, "normal")) {
+		todo[FITNESS_MOMENTS][POSTERIOR_NORMAL] = 1;
+		assert(0); /* unimplemented */
+	    } else if (!strcmp(arg, "beta")) {
+		todo[FITNESS_MOMENTS][POSTERIOR_BETA] = 1;
+	    } else {
+		fprintf(stderr, "Unrecognized -moments type: "
+			"should be normal or beta\n");
+		exit(1);
+	    }
+	} else if (!strcmp(argv[i], "-mu") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
 	    double val = strtod(arg, &endptr);
@@ -377,7 +490,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	    }
 	    mu = val;
-	} else if (!strcmp(argv[i], "-sigma")) {
+	} else if (!strcmp(argv[i], "-sigma") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
 	    double val = strtod(arg, &endptr);
@@ -386,7 +499,25 @@ int main(int argc, char **argv) {
 		exit(1);
 	    }
 	    sigma = val;
-	} else if (!strcmp(argv[i], "-nSat")) {
+	} else if (!strcmp(argv[i], "-a") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    double val = strtod(arg, &endptr);
+	    if (endptr == arg) {
+		fprintf(stderr, "Argument to -a should be a number\n");
+		exit(1);
+	    }
+	    a = val;
+	} else if (!strcmp(argv[i], "-b") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    double val = strtod(arg, &endptr);
+	    if (endptr == arg) {
+		fprintf(stderr, "Argument to -b should be a number\n");
+		exit(1);
+	    }
+	    b = val;
+	} else if (!strcmp(argv[i], "-nSat") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
 	    long val = strtol(arg, &endptr, 0);
@@ -397,7 +528,7 @@ int main(int argc, char **argv) {
 	    }
 	    nSat = val;
 	    update_mode = UPDATE_EXACT;
-	} else if (!strcmp(argv[i], "-nSatGE")) {
+	} else if (!strcmp(argv[i], "-nSatGE") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
 	    long val = strtol(arg, &endptr, 0);
@@ -408,7 +539,7 @@ int main(int argc, char **argv) {
 	    }
 	    nSat = val;
 	    update_mode = UPDATE_ATLEAST;
-	} else if (!strcmp(argv[i], "-k")) {
+	} else if (!strcmp(argv[i], "-k") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
 	    long val = strtol(arg, &endptr, 0);
@@ -428,6 +559,8 @@ int main(int argc, char **argv) {
 	setup_prior_uniform();
     } else if (prior_type == PRIOR_NORMAL) {
 	setup_normal(prior, mu, sigma);
+    } else if (prior_type == PRIOR_BETA) {
+	setup_beta(prior, a, b);
     } else {
 	assert(0);
     }
@@ -446,11 +579,25 @@ int main(int argc, char **argv) {
     printf("Posterior mean is %g\n", mean_pdf(posterior));
     printf("Posterior stddev is %g\n", stddev_pdf(posterior));
 
-    fit_minsigma_brute();
-    gnuplot_data("minsigma.dat", fit, NUM_SAMPLES);
+    if (todo[FITNESS_MOMENTS][POSTERIOR_BETA]) {
+	fit_moments_beta();
+	gnuplot_data("moments-beta.dat", fit, NUM_SAMPLES);
+    }
 
-    fit_minerror_brute();
-    gnuplot_data("minerror.dat", fit, NUM_SAMPLES);
+    if (todo[FITNESS_MINSIGMA][POSTERIOR_NORMAL]) {
+	fit_minsigma_brute();
+	gnuplot_data("minsigma-normal.dat", fit, NUM_SAMPLES);
+    }
+
+    if (todo[FITNESS_MINERROR][POSTERIOR_NORMAL]) {
+	fit_minerror_norm_brute();
+	gnuplot_data("minerror-normal.dat", fit, NUM_SAMPLES);
+    }
+
+    if (todo[FITNESS_MINERROR][POSTERIOR_BETA]) {
+	fit_minerror_beta_brute();
+	gnuplot_data("minerror-beta.dat", fit, NUM_SAMPLES);
+    }
 
     return 0;
 }
