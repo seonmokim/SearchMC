@@ -12,8 +12,8 @@ use File::Basename;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-my $meanSize = 640;
-my $sigmaSize = 120;
+#my $meanSize = 640;
+#my $sigmaSize = 140;
 my $cryptominisat = "./cryptominisat4";
 my $temp_dir = "./temp_files";
 my $sat_cnt = 0;
@@ -44,6 +44,7 @@ my $cl;
 my $thres;
 
 my $mode = "batch";
+my $solver = "cryptominisat";
 my $verbose = 0;
 my $save_CNF_files = '';
 my $xor_num_vars;
@@ -61,40 +62,42 @@ GetOptions ("thres=f" => \$thres,
 "save_CNF_files" => \$save_CNF_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \$output_name,
+"solver=s" => \$solver,
 "random_seed=i" => \$random_seed,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
+
+die "No input file!\n"
+unless @ARGV == 1;
 
 if (defined $random_seed) {
     srand($random_seed);
 }
 
-my($filename, $base_filename);
-
-if (@ARGV == 1) {
-    $filename = $ARGV[0];
-    $base_filename = basename($filename);
-} else {
-    check_options(); # This handles -help
-    die "One non-option argument required, input file name\n";
-}
+my $filename = $ARGV[0];
+my $base_filename = basename($filename);
 
 mkdir ($temp_dir) unless(-d $temp_dir);
 
 my $start = time();
 
-if($input_type eq "smt") {
+check_options();
+
+if($input_type eq "smt" && $ $solver eq "cryptominisat") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
 }
 
-check_options();
+read_file_batch($filename);
+    
+
 
 $table_w = 64;
 my $delta = $table_w;
 #$cl = (sqrt(($cl*100)**2-25)+5)/100;
+my $true_inf = 24.75;
 
 ## initial round: uniform -> truncated normal
 $mu = $table_w / 2;
@@ -108,13 +111,13 @@ $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c,
 $sat_cnt++;
 $exhaust_cnt++;
 
-($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $nSat);
+($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
 
 ($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
 
 my $sub_end = time();
 
-if ($verbose == 1) {
+if ($verbose ) {
     print "$exhaust_cnt: Old Mu = $mu, Old Sigma = $sigma, nSat = $nSat, k = $k, c = $c\n";
     print "$exhaust_cnt: New Mu = $mu_prime, New Sigma = $sigma_prime\n";
     printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
@@ -149,7 +152,7 @@ while ($delta > $thres)
         print "Result: Exact Influence = $nSat\n";
         last;
     } else {
-        ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $nSat);
+        ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
         while($mu_prime == -1) {
             $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $k, $c, $exhaust_cnt);
             $exhaust_cnt++;
@@ -158,11 +161,11 @@ while ($delta > $thres)
             } else {
                 $sat_cnt=$sat_cnt+$nSat+1;
             }
-            ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $nSat);
+            ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
         }
         ($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
         $sub_end = time();
-        if ($verbose == 1) {
+        if ($verbose ) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
             printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
             printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
@@ -173,7 +176,7 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if(!$save_CNF_files) {
+if($save_CNF_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 my $end = time();
@@ -185,12 +188,16 @@ if ($k == 0 ) {
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
     printf "%.4f %.4f\n",$lb,$ub;
-    printf "Result: Lower Bound = %.4f\n",$lb;
-    printf "Result: Upper Bound = %.4f\n",$ub;
-    print "Result: Filename = $base_filename\n";
-    print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
-    print "Result: #Sat Query = $sat_cnt\n";
-    printf("Result: Running Time = %.4f\n", $end - $start);
+#    printf "Result: Lower Bound = %.4f\n",$lb;
+#    printf "Result: Upper Bound = %.4f\n",$ub;
+#    print "Result: Filename = $base_filename\n";
+#    print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
+#    print "Result: #Sat Query = $sat_cnt\n";
+#    printf("Result: Running Time = %.4f\n", $end - $start);
+}
+
+if ($lb > $true_inf || $ub < $true_inf ) {
+    print "Wrong Result\n";
 }
 
 sub convert_smt_to_cnf {
@@ -209,8 +216,7 @@ sub convert_smt_to_cnf {
 }
 
 sub check_options {
-    if ($help)
-    {
+    if ($help) {
         print "Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
         For example, ./SearchMC.pl -cl=0.9 -thres=2 -verbose=1 test.cnf\n
         \n
@@ -224,25 +230,41 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (not supported)\n
-        -save_CNF_files : store all CNF files\n
-        -random_seed=<integer>: use repeatable random choices with given seed\n";
-        exit;
+        -save_CNF_files : store all CNF files\n";
+        last;
     }
     if ($cl && $thres) {
+		if ($cl <= 0 && $cl > 1) {
+			die "Confidence level should be 0 < cl < 1";
+		}
+		if ($thres <= 0 && $thres > 64) {
+			die "Confidence level should be 0 < thres <= 64";
+		}
     
     } else {
         die "cl and thres values needed\n"
     }
-    if ($mode ne "batch") {
-        die "Invalid mode\n";
-    }
-
+    
     if($mode eq "batch") {
-        read_file_batch($filename);
-    } else {
-        die "Invalid mode\n";
+        
+    } elsif ($mode eq "inc") {
+		
+	} else {
+        die "Invalid mode: $mode\n";
     }
     
+    if($solver eq "cryptominisat") {
+        
+    } elsif ($solver eq "z3") {
+		if ($input_type eq "cnf") {
+			die "$solver only works with SMT-LIB2 formula\n";
+		}
+	} else {
+        die "Invalid solver: $solver\n";
+    }
+    if($verbose < 0 && $verbose > 1) {
+		die "Wrong verbose mode\n";
+	}
     if($xor_num_vars) {
     } else {
         $xor_num_vars = floor(scalar(@vars)/2);
@@ -300,75 +322,109 @@ sub getNormFactor {
 }
 
 sub updateDist {
-    my($mu, $sigma, $c, $nSat) = @_;
+    my($mu, $sigma, $c, $xor, $nSat) = @_;
     my $new_mu;
     my $new_sigma;
+    my $prior;
+    my $option;
+
     if ($sigma > 1000) {
-        if ($nSat == 0) {
-            $new_mu = 13.2260;
-            $new_sigma = 11.1464;
-        } else {
-            $new_mu = 50.0896;
-            $new_sigma = 11.4412;
-        }
-        
-        return ($new_mu, $new_sigma);
-    } else {
-        my @resultarray_mu;
-        my @resultarray_sigma;
-        my $filename_mu;
-        my $filename_sigma;
-        
         if ($nSat == $c) {
-            $filename_mu = "./dist_tables/mu$nSat-more.txt";
-            $filename_sigma = "./dist_tables/sig$nSat-more.txt";
+            $prior = "uniform";
+            $option = "-nSatGE";
         } else {
-            $filename_mu = "./dist_tables/mu$nSat.txt";
-            $filename_sigma = "./dist_tables/sig$nSat.txt";
+            $prior = "uniform";
+            $option = "-nSat";
         }
-        open(my $fh1, '<:encoding(UTF-8)', $filename_mu)
-        or die "Could not open file '$filename_mu' $!";
-        open(my $fh2, '<:encoding(UTF-8)', $filename_sigma)
-        or die "Could not open file '$filename_sigma' $!";
-        
-        for(my $i=0; $i < $meanSize; $i++) {
-            seek($fh1,0,SEEK_CUR);
-            seek($fh2,0,SEEK_CUR);
-            my $lines1 = <$fh1>;
-            my $lines2 = <$fh2>;
-            my @linearray1 = split ' ', $lines1;
-            my @linearray2 = split ' ', $lines2;
-            push(@resultarray_mu, @linearray1);
-            push(@resultarray_sigma, @linearray2);
+    } else {
+        if ($nSat == $c) {
+            $prior = "normal";
+            $option = "-nSatGE";           
+        } else {
+            $prior = "normal";
+            $option = "-nSat";           
         }
-        
-        my $index1 = sprintf("%.1f", $mu-0.05)*10;
-        my $index2 = sprintf("%.1f", $sigma-0.05)*10;
-        
-        my $w1 = 10*($mu-sprintf("%.1f", $mu-0.05));
-        my $w2 = 10*($sigma-sprintf("%.1f", $sigma-0.05));
-        my $lu_mu = $resultarray_mu[$sigmaSize*$index1+$index2];
-        my $ru_mu = $resultarray_mu[$sigmaSize*$index1+$index2+1];
-        my $ll_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2];
-        my $rl_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2+1];
-        my $lu_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2];
-        my $ru_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2+1];
-        my $ll_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2];
-        my $rl_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2+1];
-        
-        if (looks_like_number($lu_mu) && looks_like_number($ru_mu) && looks_like_number($ll_mu) && looks_like_number($rl_mu) &&
-            looks_like_number($lu_sigma) && looks_like_number($ru_sigma) && looks_like_number($ll_sigma) && looks_like_number($rl_sigma)) {
-                $new_mu = (1-$w1)*($w2*$ru_mu+(1-$w2)*$lu_mu)+($w1)*($w2*$rl_mu+(1-$w2)*$ll_mu);
-                $new_sigma = (1-$w1)*($w2*$ru_sigma+(1-$w2)*$lu_sigma)+($w1)*($w2*$rl_sigma+(1-$w2)*$ll_sigma);
-            } else {
-                $new_mu = -1;
-                $new_sigma = -1;
-            }
-        close $fh1 or die "Unable to close file: $!";
-        close $fh2 or die "Unable to close file: $!";
-        return ($new_mu, $new_sigma);
     }
+    my $cmd_pid = open2(*OUT, *IN, "./one-step -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
+	my $line = <OUT>;
+	($new_mu, $new_sigma) = split ' ', $line;
+	
+	close IN;
+	close OUT;
+	waitpid($cmd_pid, 0);
+    return ($new_mu, $new_sigma);
 }
+
+#sub updateDist {
+    #my($mu, $sigma, $c, $nSat) = @_;
+    #my $new_mu;
+    #my $new_sigma;
+    #if ($sigma > 1000) {
+        #if ($nSat == 0) {
+            #$new_mu = 12.61;
+            #$new_sigma = 12.11;
+        #} else {
+            #$new_mu = 44.51;
+            #$new_sigma = 12.57;
+        #}
+        
+        #return ($new_mu, $new_sigma);
+    #} else {
+        #my @resultarray_mu;
+        #my @resultarray_sigma;
+        #my $filename_mu;
+        #my $filename_sigma;
+        
+        #if ($nSat == $c) {
+            #$filename_mu = "./dist_tables/mu$nSat-geq.txt";
+            #$filename_sigma = "./dist_tables/sig$nSat-geq.txt";
+        #} else {
+            #$filename_mu = "./dist_tables/mu$nSat.txt";
+            #$filename_sigma = "./dist_tables/sig$nSat.txt";
+        #}
+        #open(my $fh1, '<:encoding(UTF-8)', $filename_mu)
+        #or die "Could not open file '$filename_mu' $!";
+        #open(my $fh2, '<:encoding(UTF-8)', $filename_sigma)
+        #or die "Could not open file '$filename_sigma' $!";
+        
+        #for(my $i=0; $i < $meanSize; $i++) {
+            #seek($fh1,0,SEEK_CUR);
+            #seek($fh2,0,SEEK_CUR);
+            #my $lines1 = <$fh1>;
+            #my $lines2 = <$fh2>;
+            #my @linearray1 = split ' ', $lines1;
+            #my @linearray2 = split ' ', $lines2;
+            #push(@resultarray_mu, @linearray1);
+            #push(@resultarray_sigma, @linearray2);
+        #}
+        
+        #my $index1 = sprintf("%.1f", $mu-0.05)*10;
+        #my $index2 = sprintf("%.1f", $sigma-0.05)*10;
+        
+        #my $w1 = 10*($mu-sprintf("%.1f", $mu-0.05));
+        #my $w2 = 10*($sigma-sprintf("%.1f", $sigma-0.05));
+        #my $lu_mu = $resultarray_mu[$sigmaSize*$index1+$index2];
+        #my $ru_mu = $resultarray_mu[$sigmaSize*$index1+$index2+1];
+        #my $ll_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2];
+        #my $rl_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2+1];
+        #my $lu_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2];
+        #my $ru_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2+1];
+        #my $ll_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2];
+        #my $rl_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2+1];
+        
+        #if (looks_like_number($lu_mu) && looks_like_number($ru_mu) && looks_like_number($ll_mu) && looks_like_number($rl_mu) &&
+            #looks_like_number($lu_sigma) && looks_like_number($ru_sigma) && looks_like_number($ll_sigma) && looks_like_number($rl_sigma)) {
+                #$new_mu = (1-$w1)*($w2*$ru_mu+(1-$w2)*$lu_mu)+($w1)*($w2*$rl_mu+(1-$w2)*$ll_mu);
+                #$new_sigma = (1-$w1)*($w2*$ru_sigma+(1-$w2)*$lu_sigma)+($w1)*($w2*$rl_sigma+(1-$w2)*$ll_sigma);
+            #} else {
+                #$new_mu = -1;
+                #$new_sigma = -1;
+            #}
+        #close $fh1 or die "Unable to close file: $!";
+        #close $fh2 or die "Unable to close file: $!";
+        #return ($new_mu, $new_sigma);
+    #}
+#}
 
 sub getBounds {
     my ($mu_prime, $sigma_prime, $w, $cl) = @_;
@@ -494,7 +550,7 @@ sub MBoundExhaustUpToC {
     
     end_solver();
    
-    if(!$save_CNF_files) {
+    if($save_CNF_files) {
         unlink $filename_cons;
     }
 
@@ -505,9 +561,6 @@ sub ComputeCandK {
     my ($mu, $sigma, $c_max, $numVariables) = @_;
     my $c = ceil(((2**$sigma+1)/(2**$sigma-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
-    if($c > $c_max) {
-        $c = $c_max;
-    }
     my $k = floor($mu - (log2($c)/2));
     if ($k <= 0) {
         $k = 0;
