@@ -49,6 +49,8 @@ double log_choose_small_k(double n, int k) {
 
 double prior[NUM_SAMPLES];
 double posterior[NUM_SAMPLES];
+int verb = 1;
+
 
 void normalize(double *ary, int size) {
     int i;
@@ -348,13 +350,25 @@ double sum_pdf(double *ary, double min, double max) {
     return sum;
 }
 
-void fit_minsigma_brute(void) {
+void fit_minsigma_brute(double posterior_mean, double posterior_stddev) {
+    double dist = 2;
     double best_mu = -1;
     double best_sigma = HUGE_VAL;
     double mu, sigma;
+    double min_mu = posterior_mean - dist;
+    double max_mu = posterior_mean + dist;
+    double min_sigma = posterior_stddev;
+    double max_sigma = posterior_stddev + dist;
+    
+    if (min_mu < 0) {
+        min_mu = 0;
+    }
+    if (min_sigma < 0.1) {
+        min_sigma = 0.1;
+    }
 
-    for (mu = 0.0; mu <= 64; mu += 0.1) {
-	for (sigma = 0.1; sigma < 100; sigma += 0.001) {
+    for (mu = min_mu; mu <= max_mu; mu += 0.01) {
+	for (sigma = min_sigma; sigma < max_sigma; sigma += 0.01) {
 	    int cl_i;
 	    int is_good = 1;
 	    for (cl_i = 1; cl_i < 100; cl_i++) {
@@ -378,12 +392,18 @@ void fit_minsigma_brute(void) {
 		break;
 	}
 	if (sigma < best_sigma) {
-	    printf("For mu = %f, best safe sigma is %f\n", mu, sigma);
+	    if(verb == 1) {
+            printf("For mu = %f, best safe sigma is %f\n", mu, sigma);
+        }
 	    best_sigma = sigma;
 	    best_mu = mu;
 	}
     }
-    printf("Minimum safe sigma is %f, for mu = %f\n", best_sigma, best_mu);
+    if(verb == 1) {
+        printf("Minimum safe sigma is %f, for mu = %f\n", best_sigma, best_mu);
+    } else {
+		printf("%.2f %.2f\n", best_mu, best_sigma);
+	}
     setup_normal(fit, best_mu, best_sigma);
 }
 
@@ -549,6 +569,16 @@ int main(int argc, char **argv) {
 		exit(1);
 	    }
 	    k = val;
+	} else if (!strcmp(argv[i], "-verb") && i + 1 < argc) {
+        char *arg = argv[++i];
+        char *endptr;
+        long val = strtol(arg, &endptr, 0);
+        if (endptr == arg || arg < 0) {
+            fprintf(stderr, "Argument to -verb should be "
+                    "0 or 1\n");
+            exit(1);
+        }
+        verb = val;
 	} else {
 	    fprintf(stderr, "Urecognized option `%s'\n", argv[i]);
 	    exit(1);
@@ -564,20 +594,27 @@ int main(int argc, char **argv) {
     } else {
 	assert(0);
     }
-
-    gnuplot_data("prior.dat", prior, NUM_SAMPLES);
-    printf("Prior mean is %g\n", mean_pdf(prior));
-    printf("Prior stddev is %g\n", stddev_pdf(prior));
+    
+    if (verb == 1){
+		gnuplot_data("prior.dat", prior, NUM_SAMPLES);
+        printf("Prior mean is %g\n", mean_pdf(prior));
+        printf("Prior stddev is %g\n", stddev_pdf(prior));
+    }
 
     if (update_mode == UPDATE_EXACT) {
 	estimate_posterior_eq_n(k, nSat);
     } else if (update_mode == UPDATE_ATLEAST) {
 	estimate_posterior_ge_n(k, nSat);
     }
-
-    gnuplot_data("posterior.dat", posterior, NUM_SAMPLES);
-    printf("Posterior mean is %g\n", mean_pdf(posterior));
-    printf("Posterior stddev is %g\n", stddev_pdf(posterior));
+    
+    double mean = round(mean_pdf(posterior)*100)/100;
+    double stddev = round(stddev_pdf(posterior)*100)/100;
+    
+    if (verb == 1) {
+		gnuplot_data("posterior.dat", posterior, NUM_SAMPLES);
+		printf("Posterior mean is %g\n", mean_pdf(posterior));
+		printf("Posterior stddev is %g\n", stddev_pdf(posterior));
+	}
 
     if (todo[FITNESS_MOMENTS][POSTERIOR_BETA]) {
 	fit_moments_beta();
@@ -585,7 +622,7 @@ int main(int argc, char **argv) {
     }
 
     if (todo[FITNESS_MINSIGMA][POSTERIOR_NORMAL]) {
-	fit_minsigma_brute();
+	fit_minsigma_brute(mean, stddev);
 	gnuplot_data("minsigma-normal.dat", fit, NUM_SAMPLES);
     }
 
