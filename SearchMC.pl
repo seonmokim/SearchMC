@@ -37,7 +37,7 @@ my $nSat;
 my $table_w;
 my $numVariables;
 my $numClauses;
-my $c_max = 15;
+#my $c_max = 15;
 
 ## Options
 my $cl;
@@ -97,36 +97,36 @@ read_file_batch($filename);
 $table_w = 64;
 my $delta = $table_w;
 #$cl = (sqrt(($cl*100)**2-25)+5)/100;
-my $true_inf = 24.75;
+#my $true_inf = 24.75;
 
 ## initial round: uniform -> truncated normal
 $mu = $table_w / 2;
-$sigma = 100000000;
+$sigma = 1000;
 $k = sprintf("%.0f", $mu);
 $c = 1;
 
-my $sub_start = time();
+#my $sub_start = time();
 
-$nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
-$sat_cnt++;
-$exhaust_cnt++;
+#$nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+#$sat_cnt++;
+#$exhaust_cnt++;
 
-($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
+#($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
 
-($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
+#($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
 
-my $sub_end = time();
+#my $sub_end = time();
 
-if ($verbose ) {
-    print "$exhaust_cnt: Old Mu = $mu, Old Sigma = $sigma, nSat = $nSat, k = $k, c = $c\n";
-    print "$exhaust_cnt: New Mu = $mu_prime, New Sigma = $sigma_prime\n";
-    printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
-    printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
-}
+#if ($verbose ) {
+    #print "$exhaust_cnt: Old Mu = $mu, Old Sigma = $sigma, nSat = $nSat, k = $k, c = $c\n";
+    #print "$exhaust_cnt: New Mu = $mu_prime, New Sigma = $sigma_prime\n";
+    #printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
+    #printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
+#}
 
-$mu = $mu_prime;
-$sigma = $sigma_prime;
-$delta = $ub - $lb;
+#$mu = $mu_prime;
+#$sigma = $sigma_prime;
+#$delta = $ub - $lb;
 
 ## rest round: truncated normal -> truncated normal
 while ($delta > $thres)
@@ -187,17 +187,12 @@ if ($k == 0 ) {
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
-    printf "%.4f %.4f\n",$lb,$ub;
-#    printf "Result: Lower Bound = %.4f\n",$lb;
-#    printf "Result: Upper Bound = %.4f\n",$ub;
-#    print "Result: Filename = $base_filename\n";
-#    print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
-#    print "Result: #Sat Query = $sat_cnt\n";
-#    printf("Result: Running Time = %.4f\n", $end - $start);
-}
-
-if ($lb > $true_inf || $ub < $true_inf ) {
-    print "Wrong Result\n";
+    printf "Result: Lower Bound = %.4f\n",$lb;
+    printf "Result: Upper Bound = %.4f\n",$ub;
+    print "Result: Filename = $base_filename\n";
+    print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
+    print "Result: #Sat Query = $sat_cnt\n";
+    printf("Result: Running Time = %.4f\n", $end - $start);
 }
 
 sub convert_smt_to_cnf {
@@ -328,7 +323,7 @@ sub updateDist {
     my $prior;
     my $option;
 
-    if ($sigma > 1000) {
+    if ($sigma > 100) {
         if ($nSat == $c) {
             $prior = "uniform";
             $option = "-nSatGE";
