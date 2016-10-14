@@ -37,7 +37,7 @@ my $nSat;
 my $table_w;
 my $numVariables;
 my $numClauses;
-#my $c_max = 15;
+my $c_max = 15;
 
 ## Options
 my $cl;
@@ -131,7 +131,7 @@ $c = 1;
 ## rest round: truncated normal -> truncated normal
 while ($delta > $thres)
 {
-    $sub_start = time();
+    my $sub_start = time();
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
     if($mode eq "inc") {
         read_file_inc($filename);
@@ -164,7 +164,7 @@ while ($delta > $thres)
             ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
         }
         ($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
-        $sub_end = time();
+        my $sub_end = time();
         if ($verbose ) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
             printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
@@ -187,6 +187,7 @@ if ($k == 0 ) {
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
+	printf ("%.4f %.4f\n",$lb, $ub);
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
     print "Result: Filename = $base_filename\n";
