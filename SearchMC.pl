@@ -12,9 +12,10 @@ use File::Basename;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-#my $meanSize = 640;
-#my $sigmaSize = 140;
+my $meanSize = 640;
+my $sigmaSize = 140;
 my $cryptominisat = "./cryptominisat4";
+my $z3 ="/z3";
 my $temp_dir = "./temp_files";
 my $sat_cnt = 0;
 my $exhaust_cnt = 0;
@@ -67,32 +68,37 @@ GetOptions ("thres=f" => \$thres,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
-die "No input file!\n"
-unless @ARGV == 1;
-
 if (defined $random_seed) {
     srand($random_seed);
 }
+my($filename, $base_filename);
 
-my $filename = $ARGV[0];
-my $base_filename = basename($filename);
+if (@ARGV == 1) {
+    $filename = $ARGV[0];
+    $base_filename = basename($filename);
+} else {
+    check_options(); # This handles -help
+    die "One non-option argument required, input file name\n";
+}
+
+check_options();
 
 mkdir ($temp_dir) unless(-d $temp_dir);
 
 my $start = time();
 
-check_options();
-
-if($input_type eq "smt" && $ $solver eq "cryptominisat") {
+## Read input file based on input type and solver
+if($input_type eq "smt" && $solver eq "cryptominisat") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
+} elsif ($input_type eq "smt" && $solver eq "z3") {
+    read_smt_file($filename);
+} elsif ($input_type eq "cnf" && $solver eq "cryptominisat") {
+    read_cnf_file($filename);
 }
-
-read_file_batch($filename);
-    
-
+	 
 
 $table_w = 64;
 my $delta = $table_w;
@@ -133,12 +139,16 @@ while ($delta > $thres)
 {
     my $sub_start = time();
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
-    if($mode eq "inc") {
-        read_file_inc($filename);
-        $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
-        
-    } else {
-        $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+    if($solver eq "cryptominisat") {
+        $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+    } elsif ($solver eq "z3") {
+        if($mode eq "inc") {
+            read_file_inc($filename);
+            $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+            
+        } elsif($mode eq "batch") {
+            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+        }
     }
         
     $exhaust_cnt++;
@@ -152,17 +162,7 @@ while ($delta > $thres)
         print "Result: Exact Influence = $nSat\n";
         last;
     } else {
-        ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
-        while($mu_prime == -1) {
-            $nSat = MBoundExhaustUpToC($base_filename, $numVariables, $k, $c, $exhaust_cnt);
-            $exhaust_cnt++;
-            if($nSat == $c) {
-                $sat_cnt=$sat_cnt+$nSat;
-            } else {
-                $sat_cnt=$sat_cnt+$nSat+1;
-            }
-            ($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
-        }
+        ($mu_prime, $sigma_prime) = updateDist2($mu, $sigma, $c, $k, $nSat);
         ($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
         my $sub_end = time();
         if ($verbose ) {
@@ -267,7 +267,7 @@ sub check_options {
     }
 }
 
-sub read_file_batch {
+sub read_cnf_file {
     my($filename) = @_;
     ## read input file
     open(my $fh1, '<:encoding(UTF-8)', $filename)
@@ -295,9 +295,45 @@ sub read_file_batch {
     close $fh2;
 }
 
+sub read_smt_file {
+    my($filename) = @_;
+    ## read input file
+    open(my $fh1, '<:encoding(UTF-8)', $filename)
+    or die "Could not open file '$filename' $!";
+    my $file_name = basename($filename);
+    
+    open(my $fh2, '>', "$temp_dir/org-$file_name");
+
+	while(my $line = <$fh1>)
+	{
+		print IN $line;
+		if ($line =~ /^\(declare-fun $output_name \(\) \(_ BitVec ([0-9]*)\)\)$/) {
+			$numVariables = $1;
+		}
+		print $fh2 "$line";
+	}
+	if(!$numVariables) {
+		die "$output_name not existed\n"; 
+	}
+	close $fh1;
+	close $fh2;
+}
+
 sub run_solver {
-    my($filename, $c) = @_;
-    $solver_pid = open2(*OUT, *IN, "$cryptominisat --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+    my($filename, $c, $solver) = @_;
+    if ($solver eq "cryptominisat") {
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+	} elsif ($solver eq "z3") {
+		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
+	}
+}
+
+sub open_solver_inc {
+	my($filename, $solver) = @_;
+	if ($solver eq "z3") {
+		$solver_pid = open2(*OUT, *IN, "$z3 --in");
+		print IN "(set-option :produce-models true)";
+	}
 }
 
 sub end_solver {
@@ -317,7 +353,7 @@ sub getNormFactor {
     return $k;
 }
 
-sub updateDist {
+sub updateDist2 {
     my($mu, $sigma, $c, $xor, $nSat) = @_;
     my $new_mu;
     my $new_sigma;
@@ -351,76 +387,76 @@ sub updateDist {
     return ($new_mu, $new_sigma);
 }
 
-#sub updateDist {
-    #my($mu, $sigma, $c, $nSat) = @_;
-    #my $new_mu;
-    #my $new_sigma;
-    #if ($sigma > 1000) {
-        #if ($nSat == 0) {
-            #$new_mu = 12.61;
-            #$new_sigma = 12.11;
-        #} else {
-            #$new_mu = 44.51;
-            #$new_sigma = 12.57;
-        #}
+sub updateDist {
+    my($mu, $sigma, $c, $nSat) = @_;
+    my $new_mu;
+    my $new_sigma;
+    if ($sigma > 1000) {
+        if ($nSat == 0) {
+            $new_mu = 12.61;
+            $new_sigma = 12.11;
+        } else {
+            $new_mu = 44.51;
+            $new_sigma = 12.57;
+        }
         
-        #return ($new_mu, $new_sigma);
-    #} else {
-        #my @resultarray_mu;
-        #my @resultarray_sigma;
-        #my $filename_mu;
-        #my $filename_sigma;
+        return ($new_mu, $new_sigma);
+    } else {
+        my @resultarray_mu;
+        my @resultarray_sigma;
+        my $filename_mu;
+        my $filename_sigma;
         
-        #if ($nSat == $c) {
-            #$filename_mu = "./dist_tables/mu$nSat-geq.txt";
-            #$filename_sigma = "./dist_tables/sig$nSat-geq.txt";
-        #} else {
-            #$filename_mu = "./dist_tables/mu$nSat.txt";
-            #$filename_sigma = "./dist_tables/sig$nSat.txt";
-        #}
-        #open(my $fh1, '<:encoding(UTF-8)', $filename_mu)
-        #or die "Could not open file '$filename_mu' $!";
-        #open(my $fh2, '<:encoding(UTF-8)', $filename_sigma)
-        #or die "Could not open file '$filename_sigma' $!";
+        if ($nSat == $c) {
+            $filename_mu = "./dist_tables/mu$nSat-geq.txt";
+            $filename_sigma = "./dist_tables/sig$nSat-geq.txt";
+        } else {
+            $filename_mu = "./dist_tables/mu$nSat.txt";
+            $filename_sigma = "./dist_tables/sig$nSat.txt";
+        }
+        open(my $fh1, '<:encoding(UTF-8)', $filename_mu)
+        or die "Could not open file '$filename_mu' $!";
+        open(my $fh2, '<:encoding(UTF-8)', $filename_sigma)
+        or die "Could not open file '$filename_sigma' $!";
         
-        #for(my $i=0; $i < $meanSize; $i++) {
-            #seek($fh1,0,SEEK_CUR);
-            #seek($fh2,0,SEEK_CUR);
-            #my $lines1 = <$fh1>;
-            #my $lines2 = <$fh2>;
-            #my @linearray1 = split ' ', $lines1;
-            #my @linearray2 = split ' ', $lines2;
-            #push(@resultarray_mu, @linearray1);
-            #push(@resultarray_sigma, @linearray2);
-        #}
+        for(my $i=0; $i < $meanSize; $i++) {
+            seek($fh1,0,SEEK_CUR);
+            seek($fh2,0,SEEK_CUR);
+            my $lines1 = <$fh1>;
+            my $lines2 = <$fh2>;
+            my @linearray1 = split ' ', $lines1;
+            my @linearray2 = split ' ', $lines2;
+            push(@resultarray_mu, @linearray1);
+            push(@resultarray_sigma, @linearray2);
+        }
         
-        #my $index1 = sprintf("%.1f", $mu-0.05)*10;
-        #my $index2 = sprintf("%.1f", $sigma-0.05)*10;
+        my $index1 = sprintf("%.1f", $mu-0.05)*10;
+        my $index2 = sprintf("%.1f", $sigma-0.05)*10;
         
-        #my $w1 = 10*($mu-sprintf("%.1f", $mu-0.05));
-        #my $w2 = 10*($sigma-sprintf("%.1f", $sigma-0.05));
-        #my $lu_mu = $resultarray_mu[$sigmaSize*$index1+$index2];
-        #my $ru_mu = $resultarray_mu[$sigmaSize*$index1+$index2+1];
-        #my $ll_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2];
-        #my $rl_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2+1];
-        #my $lu_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2];
-        #my $ru_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2+1];
-        #my $ll_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2];
-        #my $rl_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2+1];
+        my $w1 = 10*($mu-sprintf("%.1f", $mu-0.05));
+        my $w2 = 10*($sigma-sprintf("%.1f", $sigma-0.05));
+        my $lu_mu = $resultarray_mu[$sigmaSize*$index1+$index2];
+        my $ru_mu = $resultarray_mu[$sigmaSize*$index1+$index2+1];
+        my $ll_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2];
+        my $rl_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2+1];
+        my $lu_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2];
+        my $ru_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2+1];
+        my $ll_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2];
+        my $rl_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2+1];
         
-        #if (looks_like_number($lu_mu) && looks_like_number($ru_mu) && looks_like_number($ll_mu) && looks_like_number($rl_mu) &&
-            #looks_like_number($lu_sigma) && looks_like_number($ru_sigma) && looks_like_number($ll_sigma) && looks_like_number($rl_sigma)) {
-                #$new_mu = (1-$w1)*($w2*$ru_mu+(1-$w2)*$lu_mu)+($w1)*($w2*$rl_mu+(1-$w2)*$ll_mu);
-                #$new_sigma = (1-$w1)*($w2*$ru_sigma+(1-$w2)*$lu_sigma)+($w1)*($w2*$rl_sigma+(1-$w2)*$ll_sigma);
-            #} else {
-                #$new_mu = -1;
-                #$new_sigma = -1;
-            #}
-        #close $fh1 or die "Unable to close file: $!";
-        #close $fh2 or die "Unable to close file: $!";
-        #return ($new_mu, $new_sigma);
-    #}
-#}
+        if (looks_like_number($lu_mu) && looks_like_number($ru_mu) && looks_like_number($ll_mu) && looks_like_number($rl_mu) &&
+            looks_like_number($lu_sigma) && looks_like_number($ru_sigma) && looks_like_number($ll_sigma) && looks_like_number($rl_sigma)) {
+                $new_mu = (1-$w1)*($w2*$ru_mu+(1-$w2)*$lu_mu)+($w1)*($w2*$rl_mu+(1-$w2)*$ll_mu);
+                $new_sigma = (1-$w1)*($w2*$ru_sigma+(1-$w2)*$lu_sigma)+($w1)*($w2*$rl_sigma+(1-$w2)*$ll_sigma);
+            } else {
+                $new_mu = -1;
+                $new_sigma = -1;
+            }
+        close $fh1 or die "Unable to close file: $!";
+        close $fh2 or die "Unable to close file: $!";
+        return ($new_mu, $new_sigma);
+    }
+}
 
 sub getBounds {
     my ($mu_prime, $sigma_prime, $w, $cl) = @_;
@@ -477,8 +513,7 @@ sub xor_tree {
         return "(xor $f1 $f2)";
     }
 }
-
-sub add_xor_constraints {
+sub add_xor_constraints_crypto {
     my($filename, $xor_num_vars, $xors, $width, $iter) = @_;
     my $filename_out = "$temp_dir/$iter-$xors-$filename";
     open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
@@ -523,34 +558,216 @@ sub add_xor_constraints {
     return $filename_out;
 }
 
+sub add_xor_constraints_z3 {
+    my($filename, $xors, $width, $iter, $output_name) = @_;
+    my $filename_out = "$temp_dir/$iter-$xors-$filename";
+    open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
+    or die "Could not open file '$temp_dir/org-$filename' $!";
+    
+    open(my $fh1, '>', "$filename_out");
+    
+    while( my $line = <$fh>)
+    {
+        print $fh1 "$line";
+    }
+    close $fh;
+    my $num_vars = int($width/2);
+    for my $i (1 .. $xors) {
+        my @posns;
+        # Commented out: select positions with replacement
+        #for my $j (1 .. $num_vars) {
+        #    my $pos = int(rand($width));
+        #    push @posns, $pos;
+        #}
+        # First part of a shuffle: select positions without replacement
+        @posns = shuffle 0 .. ($width - 1);
+        splice(@posns, $num_vars);
+        die unless @posns == $num_vars;
+        my @terms;
+        for my $pos (@posns) {
+            my $term = "(= #b1 ((_ extract $pos $pos) $output_name))";
+            push @terms, $term;
+        }
+        my $parity = rand(1) < 0.5 ? "true" : "false";
+        #my $form = "(xor " . join(" ", @terms, $parity) . ")";
+        my $form = xor_tree(@terms, $parity);
+        print $fh1 "(assert $form)\n";
+    }
+    print $fh1 "(check-sat)\n";
+    print $fh1 "(get-value ($output_name))\n";
+    close $fh1;
+    return $filename_out;
+}
+sub add_neq_constraints_z3 {
+    my($filename_cons, $filename, $solns, $ce, $iter, $xors, $width,$output_name) = @_;
+    my $filename_out = "$temp_dir/$iter-$xors-$solns-$filename";
+    open(my $fh, '<:encoding(UTF-8)', $filename_cons)
+    or die "Could not open file '$filename' $!";
+    
+    open(my $fh1, '>', "$filename_out");
+    
+    while( my $line = <$fh>)
+    {
+        if ($line eq "(check-sat)\n") {
+            if ($width % 4 == 0) {
+                printf $fh1 "(assert (not (= $output_name #x%s)))\n", $ce;
+                last;
+            }
+            else {
+                printf $fh1 "(assert (not (= $output_name #b%s)))\n", $ce;
+                last;
+            }
+        }
+        else {
+            print $fh1 "$line";
+        }
+    }
+    close $fh;
+    
+    print $fh1 "(check-sat)\n";
+    print $fh1 "(get-value ($output_name))\n";
+    close $fh1;
+    return $filename_out;
+}
 
-sub MBoundExhaustUpToC {
+
+sub MBoundExhaustUpToC_crypto {
     my($filename, $width, $xor_num_vars, $xors, $c, $iter) = @_;
     my $solns = 0;
-       
-    my $filename_cons = add_xor_constraints($filename, $xor_num_vars, $xors, $width, $iter);
     
-    run_solver($filename_cons, $c);
+    my $filename_cons = add_xor_constraints_crypto($filename, $xor_num_vars, $xors, $width, $iter);
+    
+    run_solver($filename_cons, $c, $solver);
     while (my $line = <OUT>) {
         if ($line eq "s UNSATISFIABLE\n") {
             last;
         } elsif ($line eq "s SATISFIABLE\n") {
             $solns++;
         } elsif ($line =~ /^cr ([0-9]*)$/) {
-
-		} else {
+            
+        } else {
             print "Unexpected cryptominisat result: $line\n";
             die;
         }
     }
     
     end_solver();
-   
-    if($save_CNF_files) {
+    
+    if(!$save_CNF_files) {
         unlink $filename_cons;
     }
-
+    
     return $solns;
+}
+
+sub MBoundExhaustUpToC_z3_batch {
+    my($filename, $width, $xors, $c, $iter, $output_name) = @_;
+    my $solns = 0;
+    my $filename_cons = add_xor_constraints_z3($filename, $xors, $width, $iter, $output_name);
+    
+    while ($solns < $c) {
+        my $sub_start = time();
+        run_z3($filename_cons);
+        my $line = <OUT>;
+        my $ce;
+        if ($line eq "unsat\n") {
+            $line = <OUT>;
+            last;
+        } elsif ($line eq "sat\n") {
+            $solns++;
+            $line = <OUT>;
+        } else {
+            print "Unexpected Z3 result: $line\n";
+            die;
+        }
+        if ($width % 4 == 0) {
+            if ($line =~ /^\(\($output_name #x([0-9a-fA-F]*)\)\)$/) {
+                $ce = $1;
+            $filename_cons = add_neq_constraints($filename_cons, $filename, $solns, $ce, $iter, $xors, $width, $output_name);
+        }
+        
+    }
+    else {
+        if ($line =~ /^\(\($output_name #b([0-9]*)\)\)$/)
+        {
+            $ce = $1;
+            $filename_cons = add_neq_constraints($filename_cons, $filename, $solns, $ce, $iter, $xors, $width, $output_name);
+        }
+    }
+    my $sub_end = time();
+    stop_z3();
+}
+return $solns;
+}
+
+sub MBoundExhaustUpToC_z3_inc {
+    my($width, $num_vars, $xors, $c, $output_name) = @_;
+    my $solns = 0;
+    print IN "(push 1)\n";
+    for my $i (1 .. $xors) {
+        my @posns;
+        # Commented out: select positions with replacement
+        #for my $j (1 .. $num_vars) {
+        #    my $pos = int(rand($width));
+        #    push @posns, $pos;
+        #}
+        # First part of a shuffle: select positions without replacement
+        @posns = shuffle 0 .. ($width - 1);
+        splice(@posns, $num_vars);
+        die unless @posns == $num_vars;
+        my @terms;
+        for my $pos (@posns) {
+            my $term = "(= #b1 ((_ extract $pos $pos) $output_name))";
+            push @terms, $term;
+        }
+        my $parity = rand(1) < 0.5 ? "true" : "false";
+        my $form = "(xor " . join(" ", @terms, $parity) . ")";
+        #my $form = xor_tree(@terms, $parity);
+        print IN "(assert $form)\n";
+    }
+    
+    my $hexlen = $width/4;
+    
+    while ($solns < $c) {
+        my $sub_start = time();
+        print IN "(check-sat)\n";
+       	
+        my $line = <OUT>;
+        my $ce;
+        
+        if ($line eq "unsat\n") {
+            last;
+        } elsif ($line eq "sat\n") {
+            $solns++;
+            print IN "(get-value ($output_name))\n";
+            $line = <OUT>;
+            print "$line\n";
+            if ( $width % 4 == 0 ) {
+                if ( $line =~ /^\(\($output_name #x([0-9a-fA-F]{$hexlen})\)\)$/ ) {
+                    $ce = $1;
+                printf IN "(assert (not (= $output_name #x%s)))\n", $ce;
+            } else {
+                print "Unexpected Z3 result: $line\n";
+                die;
+            }
+        } else {
+            if ( $line =~ /^\(\($output_name #b([0-9]*)\)\)$/ ) {
+                $ce = $1;
+            printf IN "(assert (not (= $output_name #b%s)))\n", $ce;
+        } else {
+            print "Unexpected Z3 result: $line\n";
+            die;
+        }
+    }
+} else {
+    print "Unexpected Z3 result: $line\n";
+    die;
+}
+my $sub_end = time();
+}
+print IN "(pop 1)\n";
+
+return $solns;
 }
 
 sub ComputeCandK {
