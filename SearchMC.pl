@@ -15,7 +15,7 @@ use Getopt::Long;
 my $meanSize = 640;
 my $sigmaSize = 140;
 my $cryptominisat = "./cryptominisat4";
-my $z3 ="/z3";
+my $z3 ="./z3";
 my $temp_dir = "./temp_files";
 my $sat_cnt = 0;
 my $exhaust_cnt = 0;
@@ -93,8 +93,10 @@ if($input_type eq "smt" && $solver eq "cryptominisat") {
     $filename = "./$base_filename.cnf";
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
-} elsif ($input_type eq "smt" && $solver eq "z3") {
+} elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "batch") {
     read_smt_file($filename);
+} elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "inc") {
+    #read_smt_file_inc($filename);
 } elsif ($input_type eq "cnf" && $solver eq "cryptominisat") {
     read_cnf_file($filename);
 }
@@ -143,11 +145,11 @@ while ($delta > $thres)
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3") {
         if($mode eq "inc") {
-            read_file_inc($filename);
-            $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
-            
+			read_smt_file_inc($filename);
+            $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
+            end_solver();
         } elsif($mode eq "batch") {
-            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
+            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
         }
     }
         
@@ -176,8 +178,11 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if($save_CNF_files) {
+if(!$save_CNF_files) {
     unlink "$temp_dir/org-$base_filename";
+}
+if($mode eq "inc") {
+	#end_solver();
 }
 my $end = time();
 
@@ -206,6 +211,9 @@ sub convert_smt_to_cnf {
             push @vars, $num;
         }
     }
+    if(not @vars) {
+		die "Output $output_name not found\n"; 
+	}
     close IN;
     close OUT;
     waitpid($converter_pid, 0);
@@ -225,7 +233,7 @@ sub check_options {
         -output_name=<output name>: output variable name (eg. x, y) for projection, SMT only\n
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
-        -mode=<solver mode>: solver mode; batch (default), inc (not supported)\n
+        -mode=<solver mode>: solver mode; batch (default), inc (incremental mode,SMT only)\n
         -save_CNF_files : store all CNF files\n";
         last;
     }
@@ -261,10 +269,11 @@ sub check_options {
     if($verbose < 0 && $verbose > 1) {
 		die "Wrong verbose mode\n";
 	}
-    if($xor_num_vars) {
-    } else {
-        $xor_num_vars = floor(scalar(@vars)/2);
-    }
+	if ($input_type eq "smt") {
+		if (!$output_name) {
+			die "Output variable should be specified\n";
+		}
+	}
 }
 
 sub read_cnf_file {
@@ -291,6 +300,10 @@ sub read_cnf_file {
             print $fh2 "$line";
         }
     }
+    if($xor_num_vars) {
+    } else {
+        $xor_num_vars = floor(scalar(@vars)/2);
+    }
     close $fh1;
     close $fh2;
 }
@@ -304,19 +317,49 @@ sub read_smt_file {
     
     open(my $fh2, '>', "$temp_dir/org-$file_name");
 
-	while(my $line = <$fh1>)
-	{
-		print IN $line;
+	while(my $line = <$fh1>) {
 		if ($line =~ /^\(declare-fun $output_name \(\) \(_ BitVec ([0-9]*)\)\)$/) {
 			$numVariables = $1;
 		}
 		print $fh2 "$line";
 	}
+	
 	if(!$numVariables) {
-		die "$output_name not existed\n"; 
+		die "Output $output_name not found\n"; 
 	}
+	if($xor_num_vars) {
+    } else {
+        $xor_num_vars = floor($numVariables/2);
+    }
 	close $fh1;
 	close $fh2;
+}
+
+sub read_smt_file_inc {
+    my($filename) = @_;
+    open_solver_inc($solver);
+    ## read input file
+    open(my $fh1, '<:encoding(UTF-8)', $filename)
+    or die "Could not open file '$filename'!";
+
+	while(my $line = <$fh1>) {
+		print $line;
+		if ($line ne "(check-sat)\n") {
+			print IN $line;
+		}
+		if ($line =~ /^\(declare-fun $output_name \(\) \(_ BitVec ([0-9]*)\)\)$/) {
+			$numVariables = $1;
+		}
+	}
+	
+	if(!$numVariables) {
+		die "Output $output_name not found\n"; 
+	}
+	if($xor_num_vars) {
+    } else {
+        $xor_num_vars = floor($numVariables/2);
+    }
+	close $fh1;
 }
 
 sub run_solver {
@@ -329,7 +372,7 @@ sub run_solver {
 }
 
 sub open_solver_inc {
-	my($filename, $solver) = @_;
+	my($solver) = @_;
 	if ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 --in");
 		print IN "(set-option :produce-models true)";
@@ -377,12 +420,12 @@ sub updateDist2 {
             $option = "-nSat";           
         }
     }
-    my $cmd_pid = open2(*OUT, *IN, "./one-step -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
-	my $line = <OUT>;
+    my $cmd_pid = open2(*OUT2, *IN2, "./one-step -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
+	my $line = <OUT2>;
 	($new_mu, $new_sigma) = split ' ', $line;
 	
-	close IN;
-	close OUT;
+	close IN2;
+	close OUT2;
 	waitpid($cmd_pid, 0);
     return ($new_mu, $new_sigma);
 }
@@ -559,8 +602,8 @@ sub add_xor_constraints_crypto {
 }
 
 sub add_xor_constraints_z3 {
-    my($filename, $xors, $width, $iter, $output_name) = @_;
-    my $filename_out = "$temp_dir/$iter-$xors-$filename";
+    my($filename, $width, $num_xor_vars, $k, $iter, $output_name) = @_;
+    my $filename_out = "$temp_dir/$iter-$k-$filename";
     open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
     or die "Could not open file '$temp_dir/org-$filename' $!";
     
@@ -568,11 +611,13 @@ sub add_xor_constraints_z3 {
     
     while( my $line = <$fh>)
     {
-        print $fh1 "$line";
+		if ($line ne "(check-sat)\n") {
+			print $fh1 "$line";
+		}
     }
     close $fh;
-    my $num_vars = int($width/2);
-    for my $i (1 .. $xors) {
+    
+    for my $i (1 .. $k) {
         my @posns;
         # Commented out: select positions with replacement
         #for my $j (1 .. $num_vars) {
@@ -581,8 +626,8 @@ sub add_xor_constraints_z3 {
         #}
         # First part of a shuffle: select positions without replacement
         @posns = shuffle 0 .. ($width - 1);
-        splice(@posns, $num_vars);
-        die unless @posns == $num_vars;
+        splice(@posns, $num_xor_vars);
+        die unless @posns == $num_xor_vars;
         my @terms;
         for my $pos (@posns) {
             my $term = "(= #b1 ((_ extract $pos $pos) $output_name))";
@@ -627,6 +672,9 @@ sub add_neq_constraints_z3 {
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
     close $fh1;
+    if(!$save_CNF_files) {
+        unlink $filename_cons;
+    }
     return $filename_out;
 }
 
@@ -650,24 +698,21 @@ sub MBoundExhaustUpToC_crypto {
             die;
         }
     }
-    
     end_solver();
     
     if(!$save_CNF_files) {
         unlink $filename_cons;
     }
-    
     return $solns;
 }
 
 sub MBoundExhaustUpToC_z3_batch {
-    my($filename, $width, $xors, $c, $iter, $output_name) = @_;
+    my($filename, $width, $num_xor_vars, $k, $c, $iter, $output_name) = @_;
     my $solns = 0;
-    my $filename_cons = add_xor_constraints_z3($filename, $xors, $width, $iter, $output_name);
+    my $filename_cons = add_xor_constraints_z3($filename, $width, $num_xor_vars, $k, $iter, $output_name);
     
     while ($solns < $c) {
-        my $sub_start = time();
-        run_z3($filename_cons);
+        run_solver($filename_cons, $c, $solver);
         my $line = <OUT>;
         my $ce;
         if ($line eq "unsat\n") {
@@ -683,21 +728,21 @@ sub MBoundExhaustUpToC_z3_batch {
         if ($width % 4 == 0) {
             if ($line =~ /^\(\($output_name #x([0-9a-fA-F]*)\)\)$/) {
                 $ce = $1;
-            $filename_cons = add_neq_constraints($filename_cons, $filename, $solns, $ce, $iter, $xors, $width, $output_name);
-        }
-        
+                $filename_cons = add_neq_constraints_z3($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
+			}
+		} else {
+			if ($line =~ /^\(\($output_name #b([0-9]*)\)\)$/)
+			{
+				$ce = $1;
+				$filename_cons = add_neq_constraints_z3($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
+			}
+		}
+		end_solver();
+	}
+	if(!$save_CNF_files) {
+        unlink $filename_cons;
     }
-    else {
-        if ($line =~ /^\(\($output_name #b([0-9]*)\)\)$/)
-        {
-            $ce = $1;
-            $filename_cons = add_neq_constraints($filename_cons, $filename, $solns, $ce, $iter, $xors, $width, $output_name);
-        }
-    }
-    my $sub_end = time();
-    stop_z3();
-}
-return $solns;
+	return $solns;
 }
 
 sub MBoundExhaustUpToC_z3_inc {
@@ -721,17 +766,13 @@ sub MBoundExhaustUpToC_z3_inc {
             push @terms, $term;
         }
         my $parity = rand(1) < 0.5 ? "true" : "false";
-        my $form = "(xor " . join(" ", @terms, $parity) . ")";
-        #my $form = xor_tree(@terms, $parity);
+        #my $form = "(xor " . join(" ", @terms, $parity) . ")";
+        my $form = xor_tree(@terms, $parity);
         print IN "(assert $form)\n";
     }
-    
-    my $hexlen = $width/4;
-    
+      
     while ($solns < $c) {
-        my $sub_start = time();
         print IN "(check-sat)\n";
-       	
         my $line = <OUT>;
         my $ce;
         
@@ -740,41 +781,39 @@ sub MBoundExhaustUpToC_z3_inc {
         } elsif ($line eq "sat\n") {
             $solns++;
             print IN "(get-value ($output_name))\n";
-            $line = <OUT>;
-            print "$line\n";
+            my $line2;
+            $line2 = <OUT>;
             if ( $width % 4 == 0 ) {
-                if ( $line =~ /^\(\($output_name #x([0-9a-fA-F]{$hexlen})\)\)$/ ) {
+                if ( $line2 =~ /^\(\($output_name #x([0-9a-fA-F]*)\)\)$/ ) {
                     $ce = $1;
-                printf IN "(assert (not (= $output_name #x%s)))\n", $ce;
-            } else {
-                print "Unexpected Z3 result: $line\n";
-                die;
-            }
-        } else {
-            if ( $line =~ /^\(\($output_name #b([0-9]*)\)\)$/ ) {
-                $ce = $1;
-            printf IN "(assert (not (= $output_name #b%s)))\n", $ce;
-        } else {
-            print "Unexpected Z3 result: $line\n";
-            die;
-        }
-    }
-} else {
-    print "Unexpected Z3 result: $line\n";
-    die;
-}
-my $sub_end = time();
-}
-print IN "(pop 1)\n";
-
-return $solns;
+                    printf IN "(assert (not (= $output_name #x%s)))\n", $ce;
+				} else {
+					print "Unexpected Z3 result: $line2\n";
+					die;
+				}
+			} else {
+				if ( $line2 =~ /^\(\($output_name #b([0-9]*)\)\)$/ ) {
+					$ce = $1;
+					printf IN "(assert (not (= $output_name #b%s)))\n", $ce;
+				} else {
+					print "Unexpected Z3 result: $line2\n";
+					die;
+				}
+			}
+		} else {
+			print "Unexpected Z3 result: $line\n";
+			die;
+		}
+	}
+	print IN "(pop 1)\n";
+	return $solns;
 }
 
 sub ComputeCandK {
     my ($mu, $sigma, $c_max, $numVariables) = @_;
     my $c = ceil(((2**$sigma+1)/(2**$sigma-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
-    my $k = floor($mu - (log2($c)/2));
+    my $k = floor($mu - (log2($c)*0.75));
     if ($k <= 0) {
         $k = 0;
         $c = 2**$numVariables + 1;
