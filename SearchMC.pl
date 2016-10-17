@@ -318,10 +318,14 @@ sub read_smt_file {
     open(my $fh2, '>', "$temp_dir/org-$file_name");
 
 	while(my $line = <$fh1>) {
-		if ($line =~ /^\(declare-fun $output_name \(\) \(_ BitVec ([0-9]*)\)\)$/) {
+		if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
 			$numVariables = $1;
 		}
-		print $fh2 "$line";
+		if ($line =~ /\s*(\s*check-sat\s*)\s*\n/ || $line =~ /\s*(\s*exit\s*)\s*\n/ || $line =~ /\s*(\s*get-model\s*)\s*\n/ ) {
+			
+		} else {
+			print $fh2 "$line";
+		}
 	}
 	
 	if(!$numVariables) {
@@ -343,12 +347,13 @@ sub read_smt_file_inc {
     or die "Could not open file '$filename'!";
 
 	while(my $line = <$fh1>) {
-		print $line;
-		if ($line ne "(check-sat)\n") {
-			print IN $line;
-		}
-		if ($line =~ /^\(declare-fun $output_name \(\) \(_ BitVec ([0-9]*)\)\)$/) {
+		if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
 			$numVariables = $1;
+		}
+		if ($line =~ /\s*(\s*check-sat\s*)\s*\n/ || $line =~ /\s*(\s*exit\s*)\s*\n/ || $line =~ /\s*(\s*get-model\s*)\s*\n/ ) {
+			
+		} else {
+			print IN $line;
 		}
 	}
 	
