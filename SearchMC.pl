@@ -161,7 +161,10 @@ while ($delta > $thres)
     }
     
     if ($k == 0 ) {
-        print "Result: Exact Influence = $nSat\n";
+	if ($verbose) {
+            printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
+	}
+        print "Result: Exact # of solutions = $nSat\n";
         last;
     } else {
         ($mu_prime, $sigma_prime) = updateDist2($mu, $sigma, $c, $k, $nSat);
@@ -321,7 +324,7 @@ sub read_smt_file {
 		if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
 			$numVariables = $1;
 		}
-		if ($line =~ /\s*(\s*check-sat\s*)\s*\n/ || $line =~ /\s*(\s*exit\s*)\s*\n/ || $line =~ /\s*(\s*get-model\s*)\s*\n/ ) {
+		if ($line =~ /\s*\(\s*check-sat\s*\)\s*\n/ || $line =~ /\s*\(\s*exit\s*\)\s*\n/ || $line =~ /\s*\(\s*get-model\s*\)\s*\n/ ) {
 			
 		} else {
 			print $fh2 "$line";
@@ -350,7 +353,7 @@ sub read_smt_file_inc {
 		if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
 			$numVariables = $1;
 		}
-		if ($line =~ /\s*(\s*check-sat\s*)\s*\n/ || $line =~ /\s*(\s*exit\s*)\s*\n/ || $line =~ /\s*(\s*get-model\s*)\s*\n/ ) {
+		if ($line =~ /\s*\(\s*check-sat\s*\)\s*\n/ || $line =~ /\s*\(\s*exit\s*\)\s*\n/ || $line =~ /\s*\(\s*get-model\s*\)\s*\n/ ) {
 			
 		} else {
 			print IN $line;
