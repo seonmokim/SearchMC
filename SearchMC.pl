@@ -14,7 +14,8 @@ use Getopt::Long;
 
 my $meanSize = 640;
 my $sigmaSize = 140;
-my $cryptominisat = "./cryptominisat4";
+my $cryptominisat2 = "./cryptominisat";
+my $cryptominisat4 = "./cryptominisat4";
 my $z3 ="./z3";
 my $temp_dir = "./temp_files";
 my $sat_cnt = 0;
@@ -45,7 +46,7 @@ my $cl;
 my $thres;
 
 my $mode = "batch";
-my $solver = "cryptominisat";
+my $solver = "cryptominisat2";
 my $verbose = 0;
 my $save_CNF_files = '';
 my $xor_num_vars;
@@ -88,7 +89,7 @@ mkdir ($temp_dir) unless(-d $temp_dir);
 my $start = time();
 
 ## Read input file based on input type and solver
-if($input_type eq "smt" && $solver eq "cryptominisat") {
+if($input_type eq "smt" && $solver eq "cryptominisat4") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
     rename "./output_0.cnf", $filename;
@@ -97,15 +98,18 @@ if($input_type eq "smt" && $solver eq "cryptominisat") {
     read_smt_file($filename);
 } elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "inc") {
     #read_smt_file_inc($filename);
-} elsif ($input_type eq "cnf" && $solver eq "cryptominisat") {
+} elsif ($input_type eq "cnf" && ($solver eq "cryptominisat2" || $solver eq "cryptominisat4")) {
     read_cnf_file($filename);
 }
 	 
 
 $table_w = 64;
 my $delta = $table_w;
-#$cl = (sqrt(($cl*100)**2-25)+5)/100;
-#my $true_inf = 24.75;
+
+## Heuristically adjusted
+if($thres < 4 && $cl > 0.3) {
+	$cl = -(1/$cl)**($thres/4)+2;
+}
 
 ## initial round: uniform -> truncated normal
 $mu = $table_w / 2;
@@ -113,35 +117,11 @@ $sigma = 1000;
 $k = sprintf("%.0f", $mu);
 $c = 1;
 
-#my $sub_start = time();
-
-#$nSat = MBoundExhaustUpToC($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
-#$sat_cnt++;
-#$exhaust_cnt++;
-
-#($mu_prime, $sigma_prime) = updateDist($mu, $sigma, $c, $k, $nSat);
-
-#($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
-
-#my $sub_end = time();
-
-#if ($verbose ) {
-    #print "$exhaust_cnt: Old Mu = $mu, Old Sigma = $sigma, nSat = $nSat, k = $k, c = $c\n";
-    #print "$exhaust_cnt: New Mu = $mu_prime, New Sigma = $sigma_prime\n";
-    #printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
-    #printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
-#}
-
-#$mu = $mu_prime;
-#$sigma = $sigma_prime;
-#$delta = $ub - $lb;
-
-## rest round: truncated normal -> truncated normal
 while ($delta > $thres)
 {
     my $sub_start = time();
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
-    if($solver eq "cryptominisat") {
+    if($solver eq "cryptominisat2" || $solver eq "cryptominisat4") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3") {
         if($mode eq "inc") {
@@ -184,9 +164,7 @@ while ($delta > $thres)
 if(!$save_CNF_files) {
     unlink "$temp_dir/org-$base_filename";
 }
-if($mode eq "inc") {
-	#end_solver();
-}
+
 my $end = time();
 
 if ($k == 0 ) {
@@ -195,7 +173,7 @@ if ($k == 0 ) {
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
-	printf ("%.4f %.4f\n",$lb, $ub);
+	printf ("$base_filename %.4f %.4f $sat_cnt %.4f\n",$lb, $ub, $end - $start);
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
     print "Result: Filename = $base_filename\n";
@@ -260,9 +238,13 @@ sub check_options {
         die "Invalid mode: $mode\n";
     }
     
-    if($solver eq "cryptominisat") {
+    if($solver eq "cryptominisat4") {
         
-    } elsif ($solver eq "z3") {
+    } elsif ($solver eq "cryptominisat2") {
+		if ($input_type ne "cnf") {
+			die "$solver only works with CNF formula\n";
+		}
+	} elsif ($solver eq "z3") {
 		if ($input_type eq "cnf") {
 			die "$solver only works with SMT-LIB2 formula\n";
 		}
@@ -286,9 +268,9 @@ sub read_cnf_file {
     or die "Could not open file '$filename' $!";
     
     open(my $fh2, '>', "$temp_dir/org-$base_filename");
-    
+    my @temp;
     while(my $line = <$fh1>) {
-        if ($line =~ /^p cnf ([0-9]*) ([0-9]*)$/) {
+        if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
             print $fh2 "$line";
             $numVariables = $1;
             $numClauses = $2;
@@ -299,6 +281,10 @@ sub read_cnf_file {
                 @vars = (1 .. $numVariables);
             }
         } elsif ($line =~ /^\s*$/) {
+			
+		} elsif ($line =~ /^cr/) {
+			@vars = split ' ', $line;
+			splice @vars, 0, 1;
 		} else {
             print $fh2 "$line";
         }
@@ -372,8 +358,10 @@ sub read_smt_file_inc {
 
 sub run_solver {
     my($filename, $c, $solver) = @_;
-    if ($solver eq "cryptominisat") {
-		$solver_pid = open2(*OUT, *IN, "$cryptominisat --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+    if ($solver eq "cryptominisat4") {
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+	} elsif ($solver eq "cryptominisat2") {
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
 	}
@@ -393,24 +381,14 @@ sub end_solver {
     waitpid($solver_pid, 0);
 }
 
-sub getNormFactor {
-    my($mu, $sigma, $w) = @_;
-    
-    if($sigma == 0) {
-        return 1;
-    }
-    my $temp = (erf(($w-$mu)/(sqrt(2)*$sigma))-erf((-$mu)/(sqrt(2)*$sigma)));
-    my $k = 2/$temp;
-    return $k;
-}
-
 sub updateDist2 {
     my($mu, $sigma, $c, $xor, $nSat) = @_;
     my $new_mu;
     my $new_sigma;
     my $prior;
     my $option;
-
+    
+    #Uniform -> Truncated Normal
     if ($sigma > 100) {
         if ($nSat == $c) {
             $prior = "uniform";
@@ -419,6 +397,7 @@ sub updateDist2 {
             $prior = "uniform";
             $option = "-nSat";
         }
+    #Truncated Normal -> Truncated Normal
     } else {
         if ($nSat == $c) {
             $prior = "normal";
@@ -509,6 +488,17 @@ sub updateDist {
     }
 }
 
+sub getNormFactor {
+    my($mu, $sigma, $w) = @_;
+    
+    if($sigma == 0) {
+        return 1;
+    }
+    my $temp = (erf(($w-$mu)/(sqrt(2)*$sigma))-erf((-$mu)/(sqrt(2)*$sigma)));
+    my $k = 2/$temp;
+    return $k;
+}
+
 sub getBounds {
     my ($mu_prime, $sigma_prime, $w, $cl) = @_;
     my $norm_factor;
@@ -576,7 +566,7 @@ sub add_xor_constraints_crypto {
     
     while( my $line = <$fh>)
     {
-        if ($line =~ /^p cnf ([0-9]*) ([0-9]*)$/) {
+        if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
         } else {
             print $fh1 "$line";
         }
@@ -593,7 +583,7 @@ sub add_xor_constraints_crypto {
         # First part of a shuffle: select positions without replacement
         @posns = shuffle @vars;
         splice(@posns, floor(scalar(@vars)/2));
-        die unless @posns == ceil(scalar(@vars)/2);
+        die unless @posns == floor(scalar(@vars)/2);
         my @terms;
         for my $pos (@posns) {
             my $term = $pos;
@@ -694,10 +684,19 @@ sub MBoundExhaustUpToC_crypto {
     my $filename_cons = add_xor_constraints_crypto($filename, $xor_num_vars, $xors, $width, $iter);
     
     run_solver($filename_cons, $c, $solver);
+    my $sat;
+    my $unsat;
+    if($solver eq "cryptominisat4") {
+		$unsat = "s UNSATISFIABLE\n";
+		$sat = "s SATISFIABLE\n";
+	} elsif ($solver eq "cryptominisat2") {
+		$unsat = "c UNSATISFIABLE\n";
+		$sat = "c SATISFIABLE\n";
+	}
     while (my $line = <OUT>) {
-        if ($line eq "s UNSATISFIABLE\n") {
+        if ($line eq $unsat) {
             last;
-        } elsif ($line eq "s SATISFIABLE\n") {
+        } elsif ($line eq $sat) {
             $solns++;
         } elsif ($line =~ /^cr ([0-9]*)$/) {
             
