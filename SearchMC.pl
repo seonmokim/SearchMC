@@ -17,6 +17,28 @@ my $sigmaSize = 140;
 my $cryptominisat2 = "./cryptominisat";
 my $cryptominisat4 = "./cryptominisat4";
 my $z3 ="./z3";
+my $mathsat = "./mathsat";
+my $mathsat_opts =
+  join(" ",
+       "-preprocessor.toplevel_propagation=true",
+       "-preprocessor.simplification=7", # all
+       "-dpll.branching_random_frequency=0.01",
+       "-dpll.branching_random_invalidate_phase_cache=true",
+       "-dpll.restart_strategy=3", # dynamic like Glucose
+       "-dpll.glucose_var_activity=true",
+       "-dpll.glucose_learnt_minimization=true",
+       "-dpll.preprocessor.mode=1", # pre-
+       "-theory.bv.eager=true",
+       "-theory.bv.bit_blast_mode=2", # AIG + synthesis
+       "-theory.bv.delay_propagated_eqs=true",
+       "-theory.arr.mode=1", # Boolector-like LoD
+       "-theory.la.enabled=false",
+       "-theory.eq_propagation=false",
+       "-theory.fp.mode=1", # eager bit-blasting
+       "-theory.fp.bit_blast_mode=2", # AIG + synthesis
+       "-theory.fp.bv_combination_enabled=true",
+       "-theory.euf.enabled=false",
+       "-theory.arr.enabled=false");
 my $temp_dir = "./temp_files";
 my $sat_cnt = 0;
 my $exhaust_cnt = 0;
@@ -94,7 +116,8 @@ if($input_type eq "smt" && $solver eq "cryptominisat4") {
     $filename = "./$base_filename.cnf";
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
-} elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "batch") {
+} elsif ($input_type eq "smt" && ($solver eq "z3" || $solver eq "mathsat")
+	 && $mode eq "batch") {
     read_smt_file($filename);
 } elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "inc") {
     #read_smt_file_inc($filename);
@@ -123,13 +146,13 @@ while ($delta > $thres)
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
     if($solver eq "cryptominisat2" || $solver eq "cryptominisat4") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
-    } elsif ($solver eq "z3") {
+    } elsif ($solver eq "z3" || $solver eq "mathsat") {
         if($mode eq "inc") {
 			read_smt_file_inc($filename);
             $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
             end_solver();
         } elsif($mode eq "batch") {
-            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+            $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
         }
     }
         
@@ -244,9 +267,9 @@ sub check_options {
 		if ($input_type ne "cnf") {
 			die "$solver only works with CNF formula\n";
 		}
-	} elsif ($solver eq "z3") {
+    } elsif ($solver eq "z3" || $solver eq "mathsat") {
 		if ($input_type eq "cnf") {
-			die "$solver only works with SMT-LIB2 formula\n";
+			die "$solver only supported with SMT-LIB2 formula\n";
 		}
 	} else {
         die "Invalid solver: $solver\n";
@@ -364,6 +387,9 @@ sub run_solver {
 		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
+	} elsif ($solver eq "mathsat") {
+		$solver_pid = open2(*OUT, *IN,
+				    "$mathsat -model $mathsat_opts $filename");
 	}
 }
 
@@ -372,6 +398,8 @@ sub open_solver_inc {
 	if ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 --in");
 		print IN "(set-option :produce-models true)";
+	} elsif ($solver eq "mathsat") {
+		die "MathSAT in incremental mode is not supported\n";
 	}
 }
 
@@ -599,7 +627,7 @@ sub add_xor_constraints_crypto {
     return $filename_out;
 }
 
-sub add_xor_constraints_z3 {
+sub add_xor_constraints_smt {
     my($filename, $width, $num_xor_vars, $k, $iter, $output_name) = @_;
     my $filename_out = "$temp_dir/$iter-$k-$filename";
     open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
@@ -641,7 +669,7 @@ sub add_xor_constraints_z3 {
     close $fh1;
     return $filename_out;
 }
-sub add_neq_constraints_z3 {
+sub add_neq_constraints_smt {
     my($filename_cons, $filename, $solns, $ce, $iter, $xors, $width,$output_name) = @_;
     my $filename_out = "$temp_dir/$iter-$xors-$solns-$filename";
     open(my $fh, '<:encoding(UTF-8)', $filename_cons)
@@ -713,10 +741,10 @@ sub MBoundExhaustUpToC_crypto {
     return $solns;
 }
 
-sub MBoundExhaustUpToC_z3_batch {
+sub MBoundExhaustUpToC_smt_batch {
     my($filename, $width, $num_xor_vars, $k, $c, $iter, $output_name) = @_;
     my $solns = 0;
-    my $filename_cons = add_xor_constraints_z3($filename, $width, $num_xor_vars, $k, $iter, $output_name);
+    my $filename_cons = add_xor_constraints_smt($filename, $width, $num_xor_vars, $k, $iter, $output_name);
     
     while ($solns < $c) {
         run_solver($filename_cons, $c, $solver);
@@ -735,13 +763,13 @@ sub MBoundExhaustUpToC_z3_batch {
         if ($width % 4 == 0) {
             if ($line =~ /^\(\($output_name #x([0-9a-fA-F]*)\)\)$/) {
                 $ce = $1;
-                $filename_cons = add_neq_constraints_z3($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
+                $filename_cons = add_neq_constraints_smt($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
 			}
 		} else {
 			if ($line =~ /^\(\($output_name #b([0-9]*)\)\)$/)
 			{
 				$ce = $1;
-				$filename_cons = add_neq_constraints_z3($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
+				$filename_cons = add_neq_constraints_smt($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
 			}
 		}
 		end_solver();
