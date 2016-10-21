@@ -80,4 +80,5 @@ $ cd build
 $ cmake -DUSE_GAUSS=ON -DM4RI_LIBRARIES=../../m4ri/install/lib/libm4ri.a -DM4RI_INCLUDE_DIRS=../../m4ri/install/include -DSTATICCOMPILE=ON ..
 $ make
 $ cp cryptominisat5 ../../../cryptominisat4
+$ gcc asa241.c update-dist.c -o update-dist -lm
 ```
