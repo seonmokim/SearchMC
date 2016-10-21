@@ -439,7 +439,7 @@ sub updateDist2 {
             $option = "-nSat";           
         }
     }
-    my $cmd_pid = open2(*OUT2, *IN2, "./one-step -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
+    my $cmd_pid = open2(*OUT2, *IN2, "./update-dist -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
 	my $line = <OUT2>;
 	($new_mu, $new_sigma) = split ' ', $line;
 	
