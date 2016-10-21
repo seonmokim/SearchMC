@@ -152,7 +152,11 @@ while ($delta > $thres)
             $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
             end_solver();
         } elsif($mode eq "batch") {
-            $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+	    if ($solver eq "z3") {
+		$nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+	    } else {
+		$nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+	    }
         }
     }
         
@@ -680,14 +684,8 @@ sub add_neq_constraints_smt {
     while( my $line = <$fh>)
     {
         if ($line eq "(check-sat)\n") {
-            if ($width % 4 == 0) {
-                printf $fh1 "(assert (not (= $output_name #x%s)))\n", $ce;
-                last;
-            }
-            else {
-                printf $fh1 "(assert (not (= $output_name #b%s)))\n", $ce;
-                last;
-            }
+	    printf $fh1 "(assert (not (= $output_name %s)))\n", $ce;
+	    last;
         }
         else {
             print $fh1 "$line";
@@ -741,7 +739,7 @@ sub MBoundExhaustUpToC_crypto {
     return $solns;
 }
 
-sub MBoundExhaustUpToC_smt_batch {
+sub MBoundExhaustUpToC_z3_batch {
     my($filename, $width, $num_xor_vars, $k, $c, $iter, $output_name) = @_;
     my $solns = 0;
     my $filename_cons = add_xor_constraints_smt($filename, $width, $num_xor_vars, $k, $iter, $output_name);
@@ -761,12 +759,12 @@ sub MBoundExhaustUpToC_smt_batch {
             die;
         }
         if ($width % 4 == 0) {
-            if ($line =~ /^\(\($output_name #x([0-9a-fA-F]*)\)\)$/) {
+            if ($line =~ /^\(\($output_name (#x[0-9a-fA-F]*)\)\)$/) {
                 $ce = $1;
                 $filename_cons = add_neq_constraints_smt($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
 			}
 		} else {
-			if ($line =~ /^\(\($output_name #b([0-9]*)\)\)$/)
+			if ($line =~ /^\(\($output_name (#b[0-9]*)\)\)$/)
 			{
 				$ce = $1;
 				$filename_cons = add_neq_constraints_smt($filename_cons, $filename, $solns, $ce, $iter, $k, $width, $output_name);
@@ -779,6 +777,51 @@ sub MBoundExhaustUpToC_smt_batch {
     }
 	return $solns;
 }
+
+sub MBoundExhaustUpToC_smt_batch {
+    my($filename, $width, $num_xor_vars, $k, $c, $iter, $output_name) = @_;
+    my $solns = 0;
+    my $filename_cons =
+      add_xor_constraints_smt($filename, $width, $num_xor_vars, $k, $iter,
+			      $output_name);
+
+    while ($solns < $c) {
+        run_solver($filename_cons, $c, $solver);
+	my $ce;
+	my $seen_sat = 0;
+	my $first_line = <OUT>;
+	if ($first_line eq "unsat\n") {
+	    last;
+	} elsif ($first_line eq "sat\n") {
+	    $seen_sat = 1;
+	} else {
+	    die "Unexpected solver output line: $first_line";
+	}
+	while (my $line = <OUT>) {
+            if ($line =~ /^\(\($output_name (#x[0-9a-fA-F]*)\)\)$/) {
+		die "Unexpected hex bitvector" if $width % 4;
+		$ce = $1;
+	    } elsif ($line =~ /^\(\($output_name (#b[0-9]*)\)\)$/) {
+		$ce = $1;
+	    } elsif ($line =~ /\($output_name (\(_ bv\d+ \d+\))\)/) {
+		$ce = $1;
+	    }
+	}
+	if ($seen_sat and not defined $ce) {
+	    die "Failed to parse satisfying assignment to $output_name ($filename_cons)";
+	}
+	$solns++;
+	$filename_cons =
+	  add_neq_constraints_smt($filename_cons, $filename, $solns,
+				  $ce, $iter, $k, $width, $output_name);
+	end_solver();
+    }
+    if(!$save_CNF_files) {
+        unlink $filename_cons;
+    }
+    return $solns;
+}
+
 
 sub MBoundExhaustUpToC_z3_inc {
     my($width, $num_vars, $xors, $c, $output_name) = @_;
