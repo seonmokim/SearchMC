@@ -1,3 +1,9 @@
+# Build update-dist.c
+```
+$ gcc asa241.c update-dist.c -o update-dist -lm
+```
+This binary file (``update-dist``) should be in SearchMC folder.
+
 # Install STP
 
 STP relies on a few dependencies, namely boost, flex/bison and minisat. Installing the required header files and binaries can be achieved through the following. (Tested on Ubuntu 14.04.)
@@ -29,12 +35,41 @@ Then, copy the STP binary file (``stp-2.1.2``) into SearchMC folder.
 Make sure to build with Gaussian Eliminiation.
 ```
 $ git clone https://gitlab.com/QIF/cryptominisat4.git
-$ cd cryptominisat
+$ cd cryptominisat4
 $ mkdir build && cd build
 $ cmake -DUSE_GAUSS=ON ..
 $ make
 ```
 Then, copy the Cryptominisat binary file (``cryptominisat4``) into SearchMC folder.
+
+# Install Cryptominisat2
+
+Make sure to build with Gaussian Eliminiation.
+```
+$ git clone https://github.com/msoos/cryptominisat.git
+$ cd cryptominisat
+$ mkdir build && cd build
+$ ../configure
+$ make
+```
+Then, copy the Cryptominisat binary file (``cryptominisat``) into SearchMC folder.
+
+# Install Z3
+
+Make sure to build with Gaussian Eliminiation.
+```
+$ git clone https://github.com/Z3Prover/z3.git
+$ cd z3
+$ python scripts/mk_make.py
+$ cd build
+$ make
+$ sudo make install
+```
+Then, copy the Z3 binary file (``z3``) into SearchMC folder.
+
+# Install MathSAT5
+
+MathSAT5 is available at http://mathsat.fbk.eu/
 
 # In-place version of build instructions
 
