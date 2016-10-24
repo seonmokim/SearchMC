@@ -70,7 +70,7 @@ my $thres;
 my $mode = "batch";
 my $solver = "cryptominisat2";
 my $verbose = 0;
-my $save_CNF_files = '';
+my $save_files = '';
 my $xor_num_vars;
 my $help = '';
 my $input_type = "cnf";
@@ -83,7 +83,7 @@ GetOptions ("thres=f" => \$thres,
 "mode=s"   => \$mode,
 "verbose=i"  => \$verbose,
 "input_type=s" => \$input_type,
-"save_CNF_files" => \$save_CNF_files,
+"save_CNF_files" => \$save_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \$output_name,
 "solver=s" => \$solver,
@@ -188,7 +188,7 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if(!$save_CNF_files) {
+if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 
@@ -242,7 +242,7 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (incremental mode,SMT only)\n
-        -save_CNF_files : store all CNF files\n";
+        -save_files : store all files\n";
         last;
     }
     if ($cl && $thres) {
@@ -696,7 +696,7 @@ sub add_neq_constraints_smt {
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
     close $fh1;
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $filename_out;
@@ -733,7 +733,7 @@ sub MBoundExhaustUpToC_crypto {
     }
     end_solver();
     
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
@@ -772,7 +772,7 @@ sub MBoundExhaustUpToC_z3_batch {
 		}
 		end_solver();
 	}
-	if(!$save_CNF_files) {
+	if(!$save_files) {
         unlink $filename_cons;
     }
 	return $solns;
@@ -816,7 +816,7 @@ sub MBoundExhaustUpToC_smt_batch {
 				  $ce, $iter, $k, $width, $output_name);
 	end_solver();
     }
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
