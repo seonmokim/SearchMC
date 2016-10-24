@@ -70,6 +70,7 @@ Then, copy the Z3 binary file (``z3``) into SearchMC folder.
 # Install MathSAT5
 
 MathSAT5 is available at http://mathsat.fbk.eu/
+
 Copy the MathSAT5 binary file (``mathsat``) into SearchMC folder.
 
 # In-place version of build instructions
