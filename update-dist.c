@@ -44,8 +44,10 @@ double log_choose_small_k(double n, int k) {
 #define log_choose log_choose_small_k
 
 #define MAX_INFL 64
-#define NUM_SAMPLES (10*MAX_INFL)
-#define NUM_SAMPLESF (10.0*MAX_INFL)
+#define SAMPLES_PER_BIT 10
+#define SAMPLES_PER_BITF ((double)SAMPLES_PER_BIT)
+#define NUM_SAMPLES (SAMPLES_PER_BIT*MAX_INFL)
+#define NUM_SAMPLESF ((double)SAMPLES_PER_BIT*MAX_INFL)
 
 double prior[NUM_SAMPLES];
 double posterior[NUM_SAMPLES];
@@ -72,7 +74,7 @@ double mean_pdf(double *ary) {
     int i;
     double total = 0;
     for (i = 0; i < NUM_SAMPLES; i++) {
-	double x = i/10.0;
+	double x = i/SAMPLES_PER_BITF;
 	total += x*ary[i];
     }
     return total;
@@ -82,7 +84,7 @@ double variance_pdf(double *ary) {
     int i;
     double total_x = 0, total_xx = 0;
     for (i = 0; i < NUM_SAMPLES; i++) {
-	double x = i/10.0;
+	double x = i/SAMPLES_PER_BITF;
 	total_x += x*ary[i];
 	total_xx += x*x*ary[i];
     }
@@ -94,7 +96,7 @@ double stddev_pdf(double *ary) {
 }
 
 double prob_eq_n(int bt, int k, int n) {
-    double b = (double)bt / 10.0;
+    double b = (double)bt / SAMPLES_PER_BITF;
     double s = floor(pow(2.0, b) + 0.5);
     double log_p1, log_p2, log_p, p;
     if (n > s)
@@ -152,7 +154,7 @@ void setup_normal(double *ary, double mu, double sigma) {
     double denom = 2 * sigma * sigma;
     assert(denom > 0.0);
     for (i = 0; i < NUM_SAMPLES; i++) {
-	double x = i/10.0;
+	double x = i/SAMPLES_PER_BITF;
 	double diff = x - mu;
 	double p = exp(-(diff*diff)/denom);
 	assert(p >= 0.0 && p <= 1.0);
@@ -337,8 +339,8 @@ void trunc_norm_conf_interval(double mu, double sigma, double bound, double cl,
 }
 
 double sum_pdf(double *ary, double min, double max) {
-    int start = floor(min * 10);
-    int end = ceil(max * 10);
+    int start = floor(min * SAMPLES_PER_BIT);
+    int end = ceil(max * SAMPLES_PER_BIT);
     double sum = 0;
     int i;
     assert(min <= max);
@@ -354,6 +356,7 @@ void fit_minsigma_brute(double posterior_mean, double posterior_stddev) {
     double dist = 2;
     double best_mu = -1;
     double best_sigma = HUGE_VAL;
+    double best_error = HUGE_VAL;
     double mu, sigma;
     double min_mu = posterior_mean - dist;
     double max_mu = posterior_mean + dist;
@@ -363,8 +366,8 @@ void fit_minsigma_brute(double posterior_mean, double posterior_stddev) {
     if (min_mu < 0) {
         min_mu = 0;
     }
-    if (min_sigma < 0.1) {
-        min_sigma = 0.1;
+    if (min_sigma < 0.01) {
+        min_sigma = 0.01;
     }
 
     for (mu = min_mu; mu <= max_mu; mu += 0.01) {
@@ -391,12 +394,19 @@ void fit_minsigma_brute(double posterior_mean, double posterior_stddev) {
 	    else if (sigma > best_sigma)
 		break;
 	}
-	if (sigma < best_sigma) {
-	    if(verb == 1) {
-            printf("For mu = %f, best safe sigma is %f\n", mu, sigma);
-        }
-	    best_sigma = sigma;
-	    best_mu = mu;
+	if (sigma <= best_sigma) {
+	    double error;
+	    setup_normal(fit, best_mu, best_sigma);
+	    error = calculate_error(posterior, fit);
+	    if (sigma < best_sigma || error < best_error) {
+		if (verb) {
+		    printf("For mu = %f, best safe sigma is %f (error %f)\n",
+			   mu, sigma, error);
+		}
+		best_sigma = sigma;
+		best_mu = mu;
+		best_error = error;
+	    }
 	}
     }
     if(verb == 1) {
@@ -413,7 +423,7 @@ void gnuplot_data(const char *fname, double *ary, int size) {
     FILE *fp = fopen(fname, "w");
     assert(fp);
     for (i = 0; i < size; i++) {
-	fprintf(fp, "%g %g\n", i/10.0, ary[i]);
+	fprintf(fp, "%g %g\n", i/SAMPLES_PER_BITF, ary[i]);
     }
     res = fclose(fp);
     assert(res == 0);
@@ -607,8 +617,8 @@ int main(int argc, char **argv) {
 	estimate_posterior_ge_n(k, nSat);
     }
     
-    double mean = round(mean_pdf(posterior)*100)/100;
-    double stddev = round(stddev_pdf(posterior)*100)/100;
+    double mean = mean_pdf(posterior);
+    double stddev = stddev_pdf(posterior);
     
     if (verb == 1) {
 		gnuplot_data("posterior.dat", posterior, NUM_SAMPLES);

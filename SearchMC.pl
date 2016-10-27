@@ -57,6 +57,7 @@ my $k;
 my $ub;
 my $lb;
 my $nSat;
+my $true_result;
 
 my $table_w;
 my $numVariables;
@@ -88,6 +89,7 @@ GetOptions ("thres=f" => \$thres,
 "output_name=s" => \$output_name,
 "solver=s" => \$solver,
 "random_seed=i" => \$random_seed,
+"true_result=f" => \$true_result,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
@@ -130,9 +132,9 @@ $table_w = 64;
 my $delta = $table_w;
 
 ## Heuristically adjusted
-if($thres < 4 && $cl > 0.3) {
-	$cl = -(1/$cl)**($thres/4)+2;
-}
+#if($thres < 4 && $cl > 0.3) {
+#	$cl = -(1/$cl)**($thres/4)+2;
+#}
 
 ## initial round: uniform -> truncated normal
 $mu = $table_w / 2;
@@ -181,6 +183,11 @@ while ($delta > $thres)
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
             printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
             printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
+	    if (defined $true_result) {
+		my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
+		my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
+		printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
+	    }
             printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
         }
         $mu = $mu_prime;
@@ -200,7 +207,12 @@ if ($k == 0 ) {
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
-	printf ("$base_filename %.4f %.4f $sat_cnt %.4f\n",$lb, $ub, $end - $start);
+    printf "$base_filename %.4f %.4f $sat_cnt %.4f", $lb, $ub, $end - $start;
+    if (defined $true_result) {
+	my $is_correct = ($true_result >= $lb && $true_result <= $ub);
+	print " ", ($is_correct ? "c" : "w");
+    }
+    print "\n";
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
     print "Result: Filename = $base_filename\n";
@@ -242,7 +254,8 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (incremental mode,SMT only)\n
-        -save_files : store all files\n";
+        -save_files : store all CNF files\n
+        -true_result=<influence>: expected result for statistics";
         last;
     }
     if ($cl && $thres) {
