@@ -348,7 +348,14 @@ double sum_pdf(double *ary, double min, double max) {
     for (i = start; i <= end; i++) {
 	sum += ary[i];
     }
-    assert(sum >= 0 && sum < 1.0001);
+    if (sum < 0 || sum >= 1.01) {
+		for (i = 0; i < NUM_SAMPLES; i++) {
+			printf ("%f ", posterior[i]);
+		}
+		putchar('\n');
+		printf ("%f %f error sum: %f\n",min, max, sum);
+	}
+    assert(sum >= 0 && sum < 1.01);
     return sum;
 }
 
