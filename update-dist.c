@@ -266,6 +266,19 @@ void fit_minerror_beta_brute(void) {
     setup_beta(fit, best_a, best_b);
 }
 
+void fit_particle_filter(void) {
+    double mean = mean_pdf(posterior);
+    double var = variance_pdf(posterior);
+    double mean01 = mean/64.0;
+    double var01 = var/(64.0*64.0);
+    double mean1m = mean01*(1.0 - mean01);
+    double diff = mean1m/var01 - 1.0;
+    double a = mean01*diff;
+    double b = (1.0 - mean01)*diff;
+    printf("Method of moments fit: a = %f, b = %f\n", a, b);
+    setup_beta(fit, a, b);
+}
+
 void fit_moments_beta(void) {
     double mean = mean_pdf(posterior);
     double var = variance_pdf(posterior);
@@ -436,20 +449,104 @@ void gnuplot_data(const char *fname, double *ary, int size) {
     assert(res == 0);
 }
 
+void plot_data(const char *fname, double *ary, int size) {
+    int i;
+    int res;
+    FILE *fp = fopen(fname, "w");
+    assert(fp);
+    for (i = 0; i < size; i++) {
+        fprintf(fp, "%g\n", ary[i]);
+    }
+    res = fclose(fp);
+    assert(res == 0);
+}
+
+int getCenter(int size)
+{
+    int i = 1;
+    int cnt = 0;
+    double max = posterior[0];
+    double index = 0;
+    for (i ; i < size; i++) {
+        if(max < posterior[i]) {
+            max = posterior[i];
+            index = i;
+            cnt = 1;
+        } else if (max == posterior[i]) {
+            cnt++;
+            index = index + i;
+        }
+    }
+    
+    int res = (int)(index/cnt);
+    return res;
+}
+
+double getLowerBound(double cen, double confidence) {
+    double res;
+    double prob = 0;
+    int index = (int)cen * 10;
+    while (prob < confidence && index > 0) {
+        prob = prob + posterior[index];
+        index--;
+    }
+    res = (double)index / 10;
+    return res;
+}
+
+double getUpperBound(double cen, double confidence) {
+    double res;
+    double prob = 0;
+    int index = (int)cen * 10+1;
+    while (prob < confidence && index < 640) {
+        prob = prob + posterior[index];
+        index++;
+    }
+    res = (double)index / 10;
+    return res;
+}
+
+void getBounds(double conf) {
+    double lb, ub;
+    double lconf, uconf;
+    double center= getCenter(NUM_SAMPLES)/10;
+    
+    printf("Center is %g\n", center);
+    if (sum_pdf(posterior, center, 64) < (conf / 2)) {
+        ub = 64;
+        lconf = conf - sum_pdf(posterior, center, 64);
+        printf("Lower conf is %g\n", lconf);
+        lb = getLowerBound(center, lconf);
+    } else if (sum_pdf(posterior, 0, center) < (conf / 2)) {
+        lb = 0;
+        uconf = conf - sum_pdf(posterior, 0, center);
+        printf("Upper conf is %g\n", uconf);
+        ub = getUpperBound(center, uconf);
+    } else {
+        lb = getLowerBound(center, conf/2);
+        ub = getUpperBound(center, conf/2);
+    }
+    printf("Lower bound is %g\n", lb);
+    printf("Upper bound is %g\n", ub);
+}
+
 #define PRIOR_UNIFORM 0
 #define PRIOR_NORMAL 1 /* truncated normal, to be precise */
 #define PRIOR_BETA 2
+#define PRIOR_PARTICLE 3
 
 int prior_type = PRIOR_UNIFORM;
 
 #define POSTERIOR_NORMAL 1 /* truncated normal, to be precise */
 #define POSTERIOR_BETA 2
-#define MAX_POSTERIOR 3
+#define POSTERIOR_PARTICLE 3
+#define MAX_POSTERIOR 4
 
 #define FITNESS_MINERROR 0
 #define FITNESS_MINSIGMA 1
 #define FITNESS_MOMENTS 2
-#define MAX_FITNESS 3
+#define FITNESS_PARTICLE 3
+#define MAX_FITNESS 4
 
 int todo[MAX_FITNESS][MAX_POSTERIOR];
 
@@ -463,6 +560,7 @@ int k = 1;
 
 double mu = 32;
 double sigma = 18;
+double cl = 0;
 
 double a = 2;
 double b = 2;
@@ -478,9 +576,11 @@ int main(int argc, char **argv) {
 		prior_type = PRIOR_NORMAL;
 	    } else if (!strcmp(arg, "beta")) {
 		prior_type = PRIOR_BETA;
+		} else if (!strcmp(arg, "particle")) {
+		prior_type = PRIOR_PARTICLE;
 	    } else {
 		fprintf(stderr, "Unrecognized -prior type: "
-			"should be uniform, normal, or beta\n");
+			"should be uniform, normal, beta or particle\n");
 		exit(1);
 	    }
 	} else if (!strcmp(argv[i], "-minerror") && i + 1 < argc) {
@@ -518,6 +618,39 @@ int main(int argc, char **argv) {
 			"should be normal or beta\n");
 		exit(1);
 	    }
+	} else if (!strcmp(argv[i], "-filter") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    if (!strcmp(arg, "particle")) {
+		todo[FITNESS_PARTICLE][POSTERIOR_PARTICLE] = 1;
+	    } else {
+		fprintf(stderr, "Unrecognized -filter type: "
+			"should be particle\n");
+		exit(1);
+	    }
+	} else if (!strcmp(argv[i], "-priorparticle") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    FILE* file;
+	    if((file = fopen(arg, "r"))==NULL) {
+	        fprintf(stderr, "couldn't open the requested file!\n");
+            exit(1);
+        }
+	    char line[256];
+	    int i = 0;
+
+        while (fgets(line, sizeof(line), file)) {
+            prior[i] = atof(line);
+            i++;
+        }
+        fclose(file);
+    } else if (!strcmp(argv[i], "-cl") && i + 1 < argc) {
+	    char *arg = argv[++i];
+	    char *endptr;
+	    double val = strtod(arg, &endptr);
+	    if (endptr == arg) {
+		fprintf(stderr, "Argument to -cl should be a number\n");
+		exit(1);
+	    }
+	    cl = val;
 	} else if (!strcmp(argv[i], "-mu") && i + 1 < argc) {
 	    char *arg = argv[++i];
 	    char *endptr;
@@ -608,6 +741,9 @@ int main(int argc, char **argv) {
 	setup_normal(prior, mu, sigma);
     } else if (prior_type == PRIOR_BETA) {
 	setup_beta(prior, a, b);
+	} else if (prior_type == PRIOR_PARTICLE) {
+	
+	//setup_particle(prior, a, b);
     } else {
 	assert(0);
     }
@@ -632,7 +768,11 @@ int main(int argc, char **argv) {
 		printf("Posterior mean is %g\n", mean_pdf(posterior));
 		printf("Posterior stddev is %g\n", stddev_pdf(posterior));
 	}
-
+    
+    if (todo[FITNESS_PARTICLE][POSTERIOR_PARTICLE]) {
+        getBounds(cl);
+        plot_data("particle-filter.dat", posterior, NUM_SAMPLES);
+    }
     if (todo[FITNESS_MOMENTS][POSTERIOR_BETA]) {
 	fit_moments_beta();
 	gnuplot_data("moments-beta.dat", fit, NUM_SAMPLES);
@@ -655,3 +795,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
