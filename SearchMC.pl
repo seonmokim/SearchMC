@@ -274,10 +274,16 @@ sub check_options {
         
     } elsif ($mode eq "inc") {
 		
-	} else {
+    } else {
         die "Invalid mode: $mode\n";
     }
-    
+
+    if ($input_type eq "cnf" && $filename =~ /\.smt2?$/) {
+	warn "Filename ends in .smt or .smt2; did you mean to specify -input_type=smt?"
+    } elsif ($input_type eq "smt" && $filename =~ /.cnf$/) {
+	warn "Filename ends in .cnf; did you mean to specify -input_type=cnf?";
+    }
+
     if($solver eq "cryptominisat4") {
         
     } elsif ($solver eq "cryptominisat2") {
@@ -294,11 +300,11 @@ sub check_options {
     if($verbose < 0 && $verbose > 1) {
 		die "Wrong verbose mode\n";
 	}
-	if ($input_type eq "smt") {
-		if (!$output_name) {
-			die "Output variable should be specified\n";
-		}
+    if ($input_type eq "smt") {
+	if (!$output_name) {
+	    die "Output variable should be specified\n";
 	}
+    }
 }
 
 sub read_cnf_file {
