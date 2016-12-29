@@ -223,7 +223,7 @@ if ($k == 0 ) {
 
 sub convert_smt_to_cnf {
     my($filename) = @_;
-    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplify --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
+    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplifications --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
     my $num;
     while(my $line = <OUT>) {
         if ($line =~ /^VarDump: $output_name bit ([0-9]*) is SAT var ([0-9]*)$/) {
