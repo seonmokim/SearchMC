@@ -116,8 +116,10 @@ my $start = time();
 if($input_type eq "smt" && $solver eq "cryptominisat4") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
-    rename "./output_0.cnf", $filename;
+    rename "./output_0.cnf", $filename
+      or die "Rename of ./output_0.cnf to $filename failed: $!";
     $base_filename = basename($filename);
+    read_cnf_file($filename);
 } elsif ($input_type eq "smt" && ($solver eq "z3" || $solver eq "mathsat")
 	 && $mode eq "batch") {
     read_smt_file($filename);
@@ -145,7 +147,7 @@ $c = 1;
 while ($delta > $thres)
 {
     my $sub_start = time();
-    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
+    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables, $thres);
     if($solver eq "cryptominisat2" || $solver eq "cryptominisat4") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
@@ -258,14 +260,13 @@ sub check_options {
         -true_result=<influence>: expected result for statistics";
         last;
     }
-    if ($cl && $thres) {
-		if ($cl <= 0 && $cl > 1) {
-			die "Confidence level should be 0 < cl < 1";
-		}
-		if ($thres <= 0 && $thres > 64) {
-			die "Confidence level should be 0 < thres <= 64";
-		}
-    
+    if (defined($cl) && defined($thres)) {
+	if ($cl <= 0 || $cl > 1) {
+	    die "Confidence level should be 0 < cl < 1";
+	}
+	if ($thres < 0 || $thres > 64) {
+	    die "Threshold should be 0 <= thres <= 64";
+	}
     } else {
         die "cl and thres values needed\n"
     }
@@ -313,7 +314,8 @@ sub read_cnf_file {
     open(my $fh1, '<:encoding(UTF-8)', $filename)
     or die "Could not open file '$filename' $!";
     
-    open(my $fh2, '>', "$temp_dir/org-$base_filename");
+    open(my $fh2, '>', "$temp_dir/org-$base_filename")
+      or die "Failed to open temporary $temp_dir/org-$base_filename: $!";
     my @temp;
     while(my $line = <$fh1>) {
         if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
@@ -323,6 +325,7 @@ sub read_cnf_file {
             if(@vars) {
                 my $proj = join(" ", @vars);
                 print $fh2 "cr $proj\n";
+		$numVariables = scalar(@vars);
             } else {
                 @vars = (1 .. $numVariables);
             }
@@ -405,7 +408,11 @@ sub read_smt_file_inc {
 sub run_solver {
     my($filename, $c, $solver) = @_;
     if ($solver eq "cryptominisat4") {
-		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+	my $max_sol_limited = $c;
+	# In the version I looked at, the arg to --maxsol is parsed
+	# into a uint32_t, and CMS will croak if it's out of range.
+	$max_sol_limited = 2**32-1 if $max_sol_limited > 2**32-1;
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$max_sol_limited --verb=0 $filename");
 	} elsif ($solver eq "cryptominisat2") {
 		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
@@ -907,10 +914,14 @@ sub MBoundExhaustUpToC_z3_inc {
 }
 
 sub ComputeCandK {
-    my ($mu, $sigma, $c_max, $numVariables) = @_;
+    my ($mu, $sigma, $c_max, $numVariables, $thres) = @_;
     my $c = ceil(((2**$sigma+1)/(2**$sigma-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
     my $k = floor($mu - (log2($c)*0.75));
+    if ($thres == 0) {
+	# Special case: threshold = 0 ==> disable approximation
+	$k = 0;
+    }
     if ($k <= 0) {
         $k = 0;
         $c = 2**$numVariables + 1;
