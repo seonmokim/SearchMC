@@ -9,13 +9,14 @@ use IPC::Open2;
 use List::Util 'shuffle';
 use Time::HiRes qw(time);
 use File::Basename;
+use File::Copy;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
 my $meanSize = 640;
 my $sigmaSize = 140;
 my $cryptominisat2 = "./cryptominisat";
-my $cryptominisat4 = "./cryptominisat4";
+my $cryptominisat5 = "./cryptominisat5";
 my $z3 ="./z3";
 my $mathsat = "./mathsat";
 my $mathsat_opts =
@@ -62,16 +63,17 @@ my $true_result;
 my $table_w;
 my $numVariables;
 my $numClauses;
-my $c_max = 15;
+my $c_max = int(2**10);
 
 ## Options
 my $cl;
 my $thres;
+my $alpha = 0;
 
 my $mode = "batch";
 my $solver = "cryptominisat2";
 my $verbose = 0;
-my $save_files = '';
+my $save_CNF_files = '';
 my $xor_num_vars;
 my $help = '';
 my $input_type = "cnf";
@@ -81,10 +83,11 @@ my $random_seed = undef;
 
 GetOptions ("thres=f" => \$thres,
 "cl=f"   => \$cl,
+"alpha=f"   => \$alpha,
 "mode=s"   => \$mode,
 "verbose=i"  => \$verbose,
 "input_type=s" => \$input_type,
-"save_files" => \$save_files,
+"save_CNF_files" => \$save_CNF_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \$output_name,
 "solver=s" => \$solver,
@@ -101,6 +104,8 @@ my($filename, $base_filename);
 if (@ARGV == 1) {
     $filename = $ARGV[0];
     $base_filename = basename($filename);
+    copy($filename,"./$base_filename"); 
+    $filename = "./$base_filename";
 } else {
     check_options(); # This handles -help
     die "One non-option argument required, input file name\n";
@@ -113,11 +118,10 @@ mkdir ($temp_dir) unless(-d $temp_dir);
 my $start = time();
 
 ## Read input file based on input type and solver
-if($input_type eq "smt" && $solver eq "cryptominisat4") {
+if($input_type eq "smt" && $solver eq "cryptominisat5") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
-    rename "./output_0.cnf", $filename
-      or die "Rename of ./output_0.cnf to $filename failed: $!";
+    rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
     read_cnf_file($filename);
 } elsif ($input_type eq "smt" && ($solver eq "z3" || $solver eq "mathsat")
@@ -125,7 +129,7 @@ if($input_type eq "smt" && $solver eq "cryptominisat4") {
     read_smt_file($filename);
 } elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "inc") {
     #read_smt_file_inc($filename);
-} elsif ($input_type eq "cnf" && ($solver eq "cryptominisat2" || $solver eq "cryptominisat4")) {
+} elsif ($input_type eq "cnf" && ($solver eq "cryptominisat2" || $solver eq "cryptominisat5")) {
     read_cnf_file($filename);
 }
 	 
@@ -133,13 +137,14 @@ if($input_type eq "smt" && $solver eq "cryptominisat4") {
 $table_w = 64;
 my $delta = $table_w;
 
-## Heuristically adjusted
-#if($thres < 4 && $cl > 0.3) {
-#	$cl = -(1/$cl)**($thres/4)+2;
-#}
+$cl = $cl+(1-$cl) * $alpha;
 
-## initial round: uniform -> truncated normal
-$mu = $table_w / 2;
+## initial round
+if ($numVariables > $table_w / 2) {
+    $mu = $table_w / 2;
+} else {
+    $mu = $numVariables / 2;
+}
 $sigma = 1000;
 $k = sprintf("%.0f", $mu);
 $c = 1;
@@ -147,8 +152,8 @@ $c = 1;
 while ($delta > $thres)
 {
     my $sub_start = time();
-    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables, $thres);
-    if($solver eq "cryptominisat2" || $solver eq "cryptominisat4") {
+    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
+    if($solver eq "cryptominisat2" || $solver eq "cryptominisat5") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
         if($mode eq "inc") {
@@ -178,8 +183,9 @@ while ($delta > $thres)
         print "Result: Exact # of solutions = $nSat\n";
         last;
     } else {
-        ($mu_prime, $sigma_prime) = updateDist2($mu, $sigma, $c, $k, $nSat);
-        ($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
+        #($mu_prime, $sigma_prime) = updateDist2($mu, $sigma, $c, $k, $nSat);
+        #($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
+        ($mu_prime, $sigma_prime, $lb, $ub) = updateDist3($mu, $sigma, $c, $k, $nSat, $cl);
         my $sub_end = time();
         if ($verbose ) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
@@ -189,6 +195,7 @@ while ($delta > $thres)
 		my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
 		my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
 		printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
+		printf "$exhaust_cnt: Error = %.4f\n", abs($true_result-$mu_prime);
 	    }
             printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
         }
@@ -197,7 +204,7 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if(!$save_files) {
+if(!$save_CNF_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 
@@ -212,7 +219,8 @@ if ($k == 0 ) {
     printf "$base_filename %.4f %.4f $sat_cnt %.4f", $lb, $ub, $end - $start;
     if (defined $true_result) {
 	my $is_correct = ($true_result >= $lb && $true_result <= $ub);
-	print " ", ($is_correct ? "c" : "w");
+	print " ", ($is_correct ? "correct" : "wrong");
+	printf " %.4f", abs($true_result-$mu);
     }
     print "\n";
     printf "Result: Lower Bound = %.4f\n",$lb;
@@ -225,7 +233,7 @@ if ($k == 0 ) {
 
 sub convert_smt_to_cnf {
     my($filename) = @_;
-    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplifications --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
+    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplify --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
     my $num;
     while(my $line = <OUT>) {
         if ($line =~ /^VarDump: $output_name bit ([0-9]*) is SAT var ([0-9]*)$/) {
@@ -256,17 +264,18 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (incremental mode,SMT only)\n
-        -save_files : store all CNF files\n
+        -save_CNF_files : store all CNF files\n
         -true_result=<influence>: expected result for statistics";
         last;
     }
-    if (defined($cl) && defined($thres)) {
-	if ($cl <= 0 || $cl > 1) {
-	    die "Confidence level should be 0 < cl < 1";
-	}
-	if ($thres < 0 || $thres > 64) {
-	    die "Threshold should be 0 <= thres <= 64";
-	}
+    if ($cl && $thres) {
+		if ($cl <= 0 && $cl > 1) {
+			die "Confidence level should be 0 < cl < 1";
+		}
+		if ($thres <= 0 && $thres > 64) {
+			die "Confidence level should be 0 < thres <= 64";
+		}
+    
     } else {
         die "cl and thres values needed\n"
     }
@@ -275,17 +284,11 @@ sub check_options {
         
     } elsif ($mode eq "inc") {
 		
-    } else {
+	} else {
         die "Invalid mode: $mode\n";
     }
-
-    if ($input_type eq "cnf" && $filename =~ /\.smt2?$/) {
-	warn "Filename ends in .smt or .smt2; did you mean to specify -input_type=smt?"
-    } elsif ($input_type eq "smt" && $filename =~ /.cnf$/) {
-	warn "Filename ends in .cnf; did you mean to specify -input_type=cnf?";
-    }
-
-    if($solver eq "cryptominisat4") {
+    
+    if($solver eq "cryptominisat5") {
         
     } elsif ($solver eq "cryptominisat2") {
 		if ($input_type ne "cnf") {
@@ -301,11 +304,11 @@ sub check_options {
     if($verbose < 0 && $verbose > 1) {
 		die "Wrong verbose mode\n";
 	}
-    if ($input_type eq "smt") {
-	if (!$output_name) {
-	    die "Output variable should be specified\n";
+	if ($input_type eq "smt") {
+		if (!$output_name) {
+			die "Output variable should be specified\n";
+		}
 	}
-    }
 }
 
 sub read_cnf_file {
@@ -314,8 +317,7 @@ sub read_cnf_file {
     open(my $fh1, '<:encoding(UTF-8)', $filename)
     or die "Could not open file '$filename' $!";
     
-    open(my $fh2, '>', "$temp_dir/org-$base_filename")
-      or die "Failed to open temporary $temp_dir/org-$base_filename: $!";
+    open(my $fh2, '>', "$temp_dir/org-$base_filename");
     my @temp;
     while(my $line = <$fh1>) {
         if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
@@ -325,7 +327,6 @@ sub read_cnf_file {
             if(@vars) {
                 my $proj = join(" ", @vars);
                 print $fh2 "cr $proj\n";
-		$numVariables = scalar(@vars);
             } else {
                 @vars = (1 .. $numVariables);
             }
@@ -407,12 +408,8 @@ sub read_smt_file_inc {
 
 sub run_solver {
     my($filename, $c, $solver) = @_;
-    if ($solver eq "cryptominisat4") {
-	my $max_sol_limited = $c;
-	# In the version I looked at, the arg to --maxsol is parsed
-	# into a uint32_t, and CMS will croak if it's out of range.
-	$max_sol_limited = 2**32-1 if $max_sol_limited > 2**32-1;
-		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$max_sol_limited --verb=0 $filename");
+    if ($solver eq "cryptominisat5") {
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat5 --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
 	} elsif ($solver eq "cryptominisat2") {
 		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
@@ -437,6 +434,56 @@ sub end_solver {
     close IN;
     close OUT;
     waitpid($solver_pid, 0);
+}
+
+sub updateDist3 {
+    my($mu, $sigma, $c, $xor, $nSat, $cl) = @_;
+    my $center;
+    my $new_sigma;
+    my $new_lb;
+    my $new_ub;
+    my $prior;
+    my $option;
+    
+    #Uniform -> Truncated Normal
+    if ($sigma > 100) {
+        if ($nSat == $c) {
+            $prior = "uniform";
+            $option = "-nSatGE";
+        } else {
+            $prior = "uniform";
+            $option = "-nSat";
+        }
+    #Truncated Normal -> Truncated Normal
+    } else {
+        if ($nSat == $c) {
+            $prior = "particle";
+            $option = "-nSatGE";           
+        } else {
+            $prior = "particle";
+            $option = "-nSat";           
+        }
+    }
+    my $cmd_pid;
+    if ($prior eq "particle") {
+        #$cmd_pid = open2(*OUT2, *IN2, "./one-step -prior $prior -priorparticle particle-filter.dat -filter particle -k $xor $option $nSat -cl $cl -verb 0");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -priorparticle posterior.dat -k $xor $option $nSat -cl $cl -verb 0");
+        #print "./particle-filter -prior $prior -priorparticle posterior.dat -k $xor $option $nSat -cl $cl -verb 0\n";
+        #print "./one-step -prior $prior -priorparticle particle-filter.dat -filter particle -k $xor $option $nSat -cl $cl -verb 0\n";
+    } else {
+        #$cmd_pid = open2(*OUT2, *IN2, "./one-step -prior $prior -filter particle -k $xor $option $nSat -cl $cl -verb 0");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -verb 0");
+        #print "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -verb 0\n";
+        #print "./one-step -prior $prior -filter particle -k $xor $option $nSat -cl $cl -verb 0\n";
+    }
+	my $line = <OUT2>;
+	($center, $new_sigma, $new_lb, $new_ub) = split ' ', $line;
+	
+	close IN2;
+	close OUT2;
+	waitpid($cmd_pid, 0);
+    #copy("posterior.dat","posterior$exhaust_cnt.dat") or die "Copy Failed:$!";
+    return ($center, $new_sigma, $new_lb, $new_ub);
 }
 
 sub updateDist2 {
@@ -465,7 +512,7 @@ sub updateDist2 {
             $option = "-nSat";           
         }
     }
-    my $cmd_pid = open2(*OUT2, *IN2, "./update-dist -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
+    my $cmd_pid = open2(*OUT2, *IN2, "./one-step -prior $prior -minsigma normal -mu $mu -sigma $sigma -k $xor $option $nSat -verb 0");
 	my $line = <OUT2>;
 	($new_mu, $new_sigma) = split ' ', $line;
 	
@@ -630,6 +677,7 @@ sub add_xor_constraints_crypto {
         }
     }
     close $fh;
+    my $sat_flag = 1;
 
     for my $i (1 .. $xors) {
         my @posns;
@@ -639,21 +687,30 @@ sub add_xor_constraints_crypto {
         #    push @posns, $pos;
         #}
         # First part of a shuffle: select positions without replacement
-        @posns = shuffle @vars;
-        splice(@posns, floor(scalar(@vars)/2));
-        die unless @posns == floor(scalar(@vars)/2);
-        my @terms;
-        for my $pos (@posns) {
-            my $term = $pos;
-            push @terms, $term;
+        #@posns = shuffle @vars;
+        #splice(@posns, floor(scalar(@vars)/2));
+        #die unless @posns == floor(scalar(@vars)/2);
+        for my $j (0 .. scalar(@vars) - 1) {
+            if (rand(1) < 0.5) {
+                push @posns, $vars[$j];
+            }
         }
-        my $parity = rand(1) < 0.5 ? "-" : "";
-        my $form = join(" ", @terms);
-        
-        print $fh1 "x$parity$form 0\n";
+        if(@posns) {
+            my $parity = rand(1) < 0.5 ? "-" : "";
+            my $form = join(" ", @posns);
+            
+            print $fh1 "x$parity$form 0\n";
+        } else {
+            if (rand(1) < 0.5) {
+                $sat_flag = 0;
+            }
+	} 
     }
 
     close $fh1;
+    if ($sat_flag == 0) {
+        $filename_out = "unsat";
+    }
     return $filename_out;
 }
 
@@ -681,18 +738,25 @@ sub add_xor_constraints_smt {
         #    push @posns, $pos;
         #}
         # First part of a shuffle: select positions without replacement
-        @posns = shuffle 0 .. ($width - 1);
-        splice(@posns, $num_xor_vars);
-        die unless @posns == $num_xor_vars;
-        my @terms;
-        for my $pos (@posns) {
-            my $term = "(= #b1 ((_ extract $pos $pos) $output_name))";
-            push @terms, $term;
+        for my $j (0 .. ($width - 1)) {
+            if (rand(1) < 0.5) {
+                push @posns, $j;
+            }
         }
-        my $parity = rand(1) < 0.5 ? "true" : "false";
-        #my $form = "(xor " . join(" ", @terms, $parity) . ")";
-        my $form = xor_tree(@terms, $parity);
-        print $fh1 "(assert $form)\n";
+        #@posns = shuffle 0 .. ($width - 1);
+        #splice(@posns, $num_xor_vars);
+        #die unless @posns == $num_xor_vars;
+        if (@posns) {
+            my @terms;
+            for my $pos (@posns) {
+                my $term = "(= #b1 ((_ extract $pos $pos) $output_name))";
+                push @terms, $term;
+            }
+            my $parity = rand(1) < 0.5 ? "true" : "false";
+            #my $form = "(xor " . join(" ", @terms, $parity) . ")";
+            my $form = xor_tree(@terms, $parity);
+            print $fh1 "(assert $form)\n";
+        }
     }
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
@@ -722,7 +786,7 @@ sub add_neq_constraints_smt {
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
     close $fh1;
-    if(!$save_files) {
+    if(!$save_CNF_files) {
         unlink $filename_cons;
     }
     return $filename_out;
@@ -734,11 +798,13 @@ sub MBoundExhaustUpToC_crypto {
     my $solns = 0;
     
     my $filename_cons = add_xor_constraints_crypto($filename, $xor_num_vars, $xors, $width, $iter);
-    
+    if ($filename_cons eq "unsat") {
+	return 0;
+    } else {
     run_solver($filename_cons, $c, $solver);
     my $sat;
     my $unsat;
-    if($solver eq "cryptominisat4") {
+    if($solver eq "cryptominisat5") {
 		$unsat = "s UNSATISFIABLE\n";
 		$sat = "s SATISFIABLE\n";
 	} elsif ($solver eq "cryptominisat2") {
@@ -758,8 +824,8 @@ sub MBoundExhaustUpToC_crypto {
         }
     }
     end_solver();
-    
-    if(!$save_files) {
+    }
+    if(!$save_CNF_files) {
         unlink $filename_cons;
     }
     return $solns;
@@ -798,7 +864,7 @@ sub MBoundExhaustUpToC_z3_batch {
 		}
 		end_solver();
 	}
-	if(!$save_files) {
+	if(!$save_CNF_files) {
         unlink $filename_cons;
     }
 	return $solns;
@@ -842,7 +908,7 @@ sub MBoundExhaustUpToC_smt_batch {
 				  $ce, $iter, $k, $width, $output_name);
 	end_solver();
     }
-    if(!$save_files) {
+    if(!$save_CNF_files) {
         unlink $filename_cons;
     }
     return $solns;
@@ -914,17 +980,13 @@ sub MBoundExhaustUpToC_z3_inc {
 }
 
 sub ComputeCandK {
-    my ($mu, $sigma, $c_max, $numVariables, $thres) = @_;
-    my $c = ceil(((2**$sigma+1)/(2**$sigma-1))**2);
+    my ($mu, $sig, $c_max, $numVariables) = @_;
+    my $c = ceil(((2**$sig+1)/(2**$sig-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
     my $k = floor($mu - (log2($c)*0.75));
-    if ($thres == 0) {
-	# Special case: threshold = 0 ==> disable approximation
-	$k = 0;
-    }
     if ($k <= 0) {
         $k = 0;
-        $c = 2**$numVariables + 1;
+        $c = $c_max;
     }
     return ($c, $k);
 }
