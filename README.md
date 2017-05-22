@@ -1,8 +1,8 @@
 # Build update-dist.c
 ```
-$ gcc asa241.c update-dist.c -o update-dist -lm
+$ gcc asa241.c particle-filter.c -o particle-filter -lm
 ```
-This binary file (``update-dist``) should be in SearchMC folder.
+This binary file (``particle-filter``) should be in SearchMC folder.
 
 # Install STP
 
