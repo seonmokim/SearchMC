@@ -73,7 +73,7 @@ my $alpha = 0;
 my $mode = "batch";
 my $solver = "cryptominisat2";
 my $verbose = 0;
-my $save_CNF_files = '';
+my $save_files = '';
 my $xor_num_vars;
 my $help = '';
 my $input_type = "cnf";
@@ -87,7 +87,7 @@ GetOptions ("thres=f" => \$thres,
 "mode=s"   => \$mode,
 "verbose=i"  => \$verbose,
 "input_type=s" => \$input_type,
-"save_CNF_files" => \$save_CNF_files,
+"save_files" => \$save_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \$output_name,
 "solver=s" => \$solver,
@@ -121,7 +121,8 @@ my $start = time();
 if($input_type eq "smt" && $solver eq "cryptominisat5") {
     convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
-    rename "./output_0.cnf", $filename;
+    rename "./output_0.cnf", $filename
+      or die "Rename of ./output_0.cnf to $filename failed: $!";
     $base_filename = basename($filename);
     read_cnf_file($filename);
 } elsif ($input_type eq "smt" && ($solver eq "z3" || $solver eq "mathsat")
@@ -204,7 +205,7 @@ while ($delta > $thres)
         $delta = $ub - $lb;
     }
 }
-if(!$save_CNF_files) {
+if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 
@@ -233,7 +234,7 @@ if ($k == 0 ) {
 
 sub convert_smt_to_cnf {
     my($filename) = @_;
-    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplify --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
+    my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplifications --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
     my $num;
     while(my $line = <OUT>) {
         if ($line =~ /^VarDump: $output_name bit ([0-9]*) is SAT var ([0-9]*)$/) {
@@ -264,16 +265,16 @@ sub check_options {
         -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
         -verbose=<verbose level>: set verbose level; 0, 1(default)\n
         -mode=<solver mode>: solver mode; batch (default), inc (incremental mode,SMT only)\n
-        -save_CNF_files : store all CNF files\n
+        -save_files : store all CNF files\n
         -true_result=<influence>: expected result for statistics";
         last;
     }
-    if ($cl && $thres) {
+    if (defined($cl) && defined($thres)) {
 		if ($cl <= 0 && $cl > 1) {
 			die "Confidence level should be 0 < cl < 1";
 		}
 		if ($thres <= 0 && $thres > 64) {
-			die "Confidence level should be 0 < thres <= 64";
+			die "Threshold should be 0 <= thres <= 64";
 		}
     
     } else {
@@ -317,7 +318,8 @@ sub read_cnf_file {
     open(my $fh1, '<:encoding(UTF-8)', $filename)
     or die "Could not open file '$filename' $!";
     
-    open(my $fh2, '>', "$temp_dir/org-$base_filename");
+    open(my $fh2, '>', "$temp_dir/org-$base_filename")
+      or die "Failed to open temporary $temp_dir/org-$base_filename: $!";
     my @temp;
     while(my $line = <$fh1>) {
         if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
@@ -409,7 +411,11 @@ sub read_smt_file_inc {
 sub run_solver {
     my($filename, $c, $solver) = @_;
     if ($solver eq "cryptominisat5") {
-		$solver_pid = open2(*OUT, *IN, "$cryptominisat5 --autodisablegauss=0 --printsol=0 --maxsol=$c --verb=0 $filename");
+		my $max_sol_limited = $c;
+	    # In the version I looked at, the arg to --maxsol is parsed
+	    # into a uint32_t, and CMS will croak if it's out of range.
+    	$max_sol_limited = 2**32-1 if $max_sol_limited > 2**32-1;
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$max_sol_limited --verb=0 $filename");
 	} elsif ($solver eq "cryptominisat2") {
 		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
@@ -520,77 +526,6 @@ sub updateDist2 {
 	close OUT2;
 	waitpid($cmd_pid, 0);
     return ($new_mu, $new_sigma);
-}
-
-sub updateDist {
-    my($mu, $sigma, $c, $nSat) = @_;
-    my $new_mu;
-    my $new_sigma;
-    if ($sigma > 1000) {
-        if ($nSat == 0) {
-            $new_mu = 12.61;
-            $new_sigma = 12.11;
-        } else {
-            $new_mu = 44.51;
-            $new_sigma = 12.57;
-        }
-        
-        return ($new_mu, $new_sigma);
-    } else {
-        my @resultarray_mu;
-        my @resultarray_sigma;
-        my $filename_mu;
-        my $filename_sigma;
-        
-        if ($nSat == $c) {
-            $filename_mu = "./dist_tables/mu$nSat-geq.txt";
-            $filename_sigma = "./dist_tables/sig$nSat-geq.txt";
-        } else {
-            $filename_mu = "./dist_tables/mu$nSat.txt";
-            $filename_sigma = "./dist_tables/sig$nSat.txt";
-        }
-        open(my $fh1, '<:encoding(UTF-8)', $filename_mu)
-        or die "Could not open file '$filename_mu' $!";
-        open(my $fh2, '<:encoding(UTF-8)', $filename_sigma)
-        or die "Could not open file '$filename_sigma' $!";
-        
-        for(my $i=0; $i < $meanSize; $i++) {
-            seek($fh1,0,SEEK_CUR);
-            seek($fh2,0,SEEK_CUR);
-            my $lines1 = <$fh1>;
-            my $lines2 = <$fh2>;
-            my @linearray1 = split ' ', $lines1;
-            my @linearray2 = split ' ', $lines2;
-            push(@resultarray_mu, @linearray1);
-            push(@resultarray_sigma, @linearray2);
-        }
-        
-        my $index1 = sprintf("%.1f", $mu-0.05)*10;
-        my $index2 = sprintf("%.1f", $sigma-0.05)*10;
-        
-        my $w1 = 10*($mu-sprintf("%.1f", $mu-0.05));
-        my $w2 = 10*($sigma-sprintf("%.1f", $sigma-0.05));
-        my $lu_mu = $resultarray_mu[$sigmaSize*$index1+$index2];
-        my $ru_mu = $resultarray_mu[$sigmaSize*$index1+$index2+1];
-        my $ll_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2];
-        my $rl_mu = $resultarray_mu[$sigmaSize*($index1+1)+$index2+1];
-        my $lu_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2];
-        my $ru_sigma = $resultarray_sigma[$sigmaSize*$index1+$index2+1];
-        my $ll_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2];
-        my $rl_sigma = $resultarray_sigma[$sigmaSize*($index1+1)+$index2+1];
-        
-        if (looks_like_number($lu_mu) && looks_like_number($ru_mu) && looks_like_number($ll_mu) && looks_like_number($rl_mu) &&
-            looks_like_number($lu_sigma) && looks_like_number($ru_sigma) && looks_like_number($ll_sigma) && looks_like_number($rl_sigma)) {
-                $new_mu = (1-$w1)*($w2*$ru_mu+(1-$w2)*$lu_mu)+($w1)*($w2*$rl_mu+(1-$w2)*$ll_mu);
-                $new_sigma = (1-$w1)*($w2*$ru_sigma+(1-$w2)*$lu_sigma)+($w1)*($w2*$rl_sigma+(1-$w2)*$ll_sigma);
-            } else {
-                $new_mu = -1;
-                $new_sigma = -1;
-            }
-        close $fh1 or die "Unable to close file: $!";
-        close $fh2 or die "Unable to close file: $!";
-        return ($new_mu, $new_sigma);
-    }
 }
 
 sub getNormFactor {
@@ -786,7 +721,7 @@ sub add_neq_constraints_smt {
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
     close $fh1;
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $filename_out;
@@ -864,7 +799,7 @@ sub MBoundExhaustUpToC_z3_batch {
 		}
 		end_solver();
 	}
-	if(!$save_CNF_files) {
+	if(!$save_files) {
         unlink $filename_cons;
     }
 	return $solns;
@@ -908,7 +843,7 @@ sub MBoundExhaustUpToC_smt_batch {
 				  $ce, $iter, $k, $width, $output_name);
 	end_solver();
     }
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
@@ -980,10 +915,13 @@ sub MBoundExhaustUpToC_z3_inc {
 }
 
 sub ComputeCandK {
-    my ($mu, $sig, $c_max, $numVariables) = @_;
+    my ($mu, $sig, $c_max, $numVariables, $thres) = @_;
     my $c = ceil(((2**$sig+1)/(2**$sig-1))**2);
-    #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
-    my $k = floor($mu - (log2($c)*0.75));
+    my $k = floor($mu - (log2($c)*0.5));
+    if ($thres == 0) {
+		# Special case: threshold = 0 ==> disable approximation
+		$k = 0;
+	}
     if ($k <= 0) {
         $k = 0;
         $c = $c_max;
