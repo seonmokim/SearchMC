@@ -81,6 +81,7 @@ my $xor_num_vars;
 my $help = '';
 my $input_type = "cnf";
 my $proj_flag = '';
+my @output_names;
 my $output_name;
 my $random_seed = undef;
 
@@ -92,7 +93,7 @@ GetOptions ("thres=f" => \$thres,
 "input_type=s" => \$input_type,
 "save_files" => \$save_files,
 "xor_num_vars=i" => \$xor_num_vars,
-"output_name=s" => \$output_name,
+"output_name=s" => \@output_names,
 "solver=s" => \$solver,
 "random_seed=i" => \$random_seed,
 "true_result=f" => \$true_result,
@@ -254,12 +255,25 @@ sub convert_smt_to_cnf {
     my($filename) = @_;
     my $converter_pid = open2(*OUT, *IN, "./stp-2.1.2 -p --disable-simplifications --disable-cbitp --disable-equality -a -w --output-CNF --minisat $filename");
     my $num;
-    while(my $line = <OUT>) {
-        if ($line =~ /^VarDump: $output_name bit ([0-9]*) is SAT var ([0-9]*)$/) {
-            $num = $2;
-            push @vars, $num;
+    print "$output_names[0] $output_names[1]\n";
+    if (scalar(@output_names) == 1) {
+        while(my $line = <OUT>) {
+            if ($line =~ /^VarDump: $output_names[0] bit ([0-9]*) is SAT var ([0-9]*)$/) {
+                $num = $2;
+                push @vars, $num;
+            }
         }
-    }
+	} else {
+		while(my $line = <OUT>) {
+            for my $output (@output_names) {
+                if ($line =~ /^VarDump: $output bit ([0-9]*) is SAT var ([0-9]*)$/) {
+                    $num = $2;
+                    push @vars, $num;
+                }
+            }
+		}
+	}
+
     if(not @vars) {
 		die "Output $output_name not found\n"; 
 	}
@@ -324,7 +338,7 @@ sub check_options {
 		die "Wrong verbose mode\n";
 	}
 	if ($input_type eq "smt") {
-		if (!$output_name) {
+		if (!@output_names) {
 			die "Output variable should be specified\n";
 		}
 	}
@@ -375,17 +389,38 @@ sub read_smt_file {
     my $file_name = basename($filename);
     
     open(my $fh2, '>', "$temp_dir/org-$file_name");
+    
 
-	while(my $line = <$fh1>) {
-		if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
-			$numVariables = $1;
+    if (scalar(@output_names) == 1) {
+		$output_name = $output_names[0];
+		while(my $line = <$fh1>) {
+			if ($line =~ /\s*\(declare-fun\s+$output_name\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
+				$numVariables = $1;
+			}
+			if ($line =~ /\s*\(\s*check-sat\s*\)\s*\n/ || $line =~ /\s*\(\s*exit\s*\)\s*\n/ || $line =~ /\s*\(\s*get-model\s*\)\s*\n/ ) {
+			} else {
+				print $fh2 "$line";
+			}
 		}
-		if ($line =~ /\s*\(\s*check-sat\s*\)\s*\n/ || $line =~ /\s*\(\s*exit\s*\)\s*\n/ || $line =~ /\s*\(\s*get-model\s*\)\s*\n/ ) {
-			
-		} else {
-			print $fh2 "$line";
+	} else {
+        while(my $line = <$fh1>) {
+            for my $output (@output_names) {
+				if ($line =~ /\s*\(declare-fun\s+$output\s*\(\s*\)\s*\(_\s+BitVec\s+([0-9]+)\s*\)\s*\)\s*/) {
+					$numVariables = $numVariables + $1;
+				}
+				if ($line =~ /\s*\(\s*check-sat\s*\)\s*\n/ || $line =~ /\s*\(\s*exit\s*\)\s*\n/ || $line =~ /\s*\(\s*get-model\s*\)\s*\n/ ) {
+				} else {
+					print $fh2 "$line";
+				}
+			}
 		}
+        $output_name = join('_',@output_names);
+        print $fh2 "(declare-fun $output_name () (_ BitVec $numVariables))\n";
+        
+        print $fh2 "(concat (_ ) $output_name)\n";
 	}
+
+	
 	
 	if(!$numVariables) {
 		die "Output $output_name not found\n"; 
@@ -755,6 +790,29 @@ sub xor_tree {
         return "(xor $f1 $f2)";
     }
 }
+
+sub concat_tree {
+    my(@a) = @_;
+    if (@a == 0) {
+        die "empty list in concat_tree";
+    } elsif (@a == 1) {
+        return $a[0];
+    } elsif (@a == 2) {
+        return "(concat (_ $a[0] $a[1]))";
+    } else {
+        my $n = scalar(@a);
+        my $l1 = floor($n / 2);
+        my $l2 = ceil($n / 2);
+        die unless $l1 + $l2 == $n;
+        my @h2 = @a;
+        my @h1 = splice(@h2, $l1);
+        die unless @h1 + @h2 == $n;
+        my $f1 = xor_tree(@h1);
+        my $f2 = xor_tree(@h2);
+        return "(concat (_ $f1 $f2))";
+    }
+}
+
 sub add_xor_constraints_crypto {
     my($filename, $xor_num_vars, $xors, $width, $iter) = @_;
     my $filename_out = "$temp_dir/$iter-$xors-$filename";
