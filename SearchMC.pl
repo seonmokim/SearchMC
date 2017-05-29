@@ -65,6 +65,9 @@ my $numVariables;
 my $numClauses;
 my $c_max = int(2**10);
 
+my @array_prob;
+$array_prob[64][1] = undef;
+
 ## Options
 my $cl;
 my $thres;
@@ -140,6 +143,8 @@ my $delta = $table_w;
 
 $cl = $cl+(1-$cl) * $alpha;
 
+init_prob_table();
+
 ## initial round
 if ($numVariables > $table_w / 2) {
     $mu = $table_w / 2;
@@ -153,7 +158,7 @@ $c = 1;
 while ($delta > $thres)
 {
     my $sub_start = time();
-    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
+    ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables, $thres);
     if($solver eq "cryptominisat2" || $solver eq "cryptominisat5") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
@@ -187,6 +192,12 @@ while ($delta > $thres)
         #($mu_prime, $sigma_prime) = updateDist2($mu, $sigma, $c, $k, $nSat);
         #($ub, $lb) = getBounds($mu_prime,$sigma_prime,$table_w,$cl);
         ($mu_prime, $sigma_prime, $lb, $ub) = updateDist3($mu, $sigma, $c, $k, $nSat, $cl);
+        update_prob_table($c, $k, $nSat, $cl);
+        if (isZero()) {
+            #print "isZero = true\n";
+            init_prob_table();
+            update_prob_table($c, $k, $nSat, $cl);
+        }
         my $sub_end = time();
         if ($verbose ) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
@@ -209,6 +220,11 @@ if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 
+norm_prob_table();
+my $sound_ub;
+my $sound_lb;
+($sound_lb, $sound_ub) = getSoundBounds();
+
 my $end = time();
 
 if ($k == 0 ) {
@@ -226,6 +242,8 @@ if ($k == 0 ) {
     print "\n";
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
+    printf "Result: Sound Lower Bound = %.4f\n",$sound_lb;
+    printf "Result: Sound Upper Bound = %.4f\n",$sound_ub;
     print "Result: Filename = $base_filename\n";
     print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
     print "Result: #Sat Query = $sat_cnt\n";
@@ -415,7 +433,7 @@ sub run_solver {
 	    # In the version I looked at, the arg to --maxsol is parsed
 	    # into a uint32_t, and CMS will croak if it's out of range.
     	$max_sol_limited = 2**32-1 if $max_sol_limited > 2**32-1;
-		$solver_pid = open2(*OUT, *IN, "$cryptominisat4 --autodisablegauss=0 --printsol=0 --maxsol=$max_sol_limited --verb=0 $filename");
+		$solver_pid = open2(*OUT, *IN, "$cryptominisat5 --autodisablegauss=0 --printsol=0 --maxsol=$max_sol_limited --verb=0 $filename");
 	} elsif ($solver eq "cryptominisat2") {
 		$solver_pid = open2(*OUT, *IN, "$cryptominisat2 --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename");
 	} elsif ($solver eq "z3") {
@@ -571,6 +589,149 @@ sub getBounds {
         $lower = 0;
     }
     return ($upper, $lower);
+}
+
+sub update_prob_table {
+    my ($c, $k, $nSat, $cl) = @_;
+    
+    if ($nSat == 0) {
+        
+        for my $i (0 .. $k - 1) {
+            $array_prob[$i][0] = $array_prob[$i][0] * ( 1 - 1/(2**($k - $i)));
+            $array_prob[$i][1] = $array_prob[$i][1];
+        }
+        
+        $array_prob[$k][0] = $array_prob[$k][0] * 0;
+        $array_prob[$k][1] = $array_prob[$k][1];
+        
+        for my $j ($k+1 .. $table_w) {
+            $array_prob[$j][0] = $array_prob[$j][0] * 0;
+            $array_prob[$j][1] = $array_prob[$j][1] * (1/(2**($j - $k)));
+        }
+
+    } elsif ($nSat == $c) {
+        for my $i (0 .. $k - 1) {
+            $array_prob[$i][0] = $array_prob[$i][0] * 0;
+            $array_prob[$i][1] = $array_prob[$i][1] * (1/(2**($k - $i)));
+        }
+        
+        $array_prob[$k][0] = $array_prob[$k][0] * 0;
+        $array_prob[$k][1] = $array_prob[$k][1];
+        
+        for my $j ($k+1 .. $table_w) {
+            $array_prob[$j][0] = $array_prob[$j][0] * ( 1 - 1/(2**($j - $k)));
+            $array_prob[$j][1] = $array_prob[$j][1];
+        }
+    } else {
+        if ($c > 44) {
+            my $center = $k+log2($nSat);
+            my $low_index = floor($center-2);
+            my $hi_index = ceil($center+2);
+            for my $i (0 .. $low_index - 1) {
+                $array_prob[$i][0] = $array_prob[$i][0] * 0;
+                $array_prob[$i][1] = $array_prob[$i][1] * 0.4;
+            }
+            
+            for my $i ($low_index .. $hi_index) {
+                $array_prob[$i][0] = $array_prob[$i][0] * 0.6;
+                $array_prob[$i][1] = $array_prob[$i][1];
+            }
+            
+            for my $j ($hi_index + 1 .. $table_w) {
+                $array_prob[$j][0] = $array_prob[$j][0] * ( 1 - 1/(2**($j - $k)));
+                $array_prob[$j][1] = $array_prob[$j][1];
+            }
+            
+        } else {
+            for my $i (0 .. $k - 1) {
+                $array_prob[$i][0] = $array_prob[$i][0] * 0;
+                $array_prob[$i][1] = $array_prob[$i][1] * (1/(2**($k - $i)));
+            }
+            
+            $array_prob[$k][0] = $array_prob[$k][0] * 0;
+            $array_prob[$k][1] = $array_prob[$k][1];
+            
+            for my $j ($k+1 .. $table_w) {
+                $array_prob[$j][0] = $array_prob[$j][0] * ( 1 - 1/(2**($j - $k)));
+                $array_prob[$j][1] = $array_prob[$j][1];
+            }            
+        }
+    }
+}
+
+sub init_prob_table {
+    for my $i (0 .. $table_w) {
+        $array_prob[$i][0] = 1;
+        $array_prob[$i][1] = 1;
+    }
+}
+
+sub isZero {
+    my $norm_factor_l = 0;
+    my $norm_factor_u = 0;
+    for my $i (0 .. $table_w) {
+        $norm_factor_l = $norm_factor_l + $array_prob[$i][0];
+        $norm_factor_u = $norm_factor_u + $array_prob[$i][1];
+    }
+    if ($norm_factor_l == 0 || $norm_factor_u == 0) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+sub norm_prob_table {
+    my $norm_factor_l = 0;
+    my $norm_factor_u = 0;
+    for my $i (0 .. $table_w) {
+        $norm_factor_l = $norm_factor_l + $array_prob[$i][0];
+        $norm_factor_u = $norm_factor_u + $array_prob[$i][1];
+    }
+
+    for my $i (0 .. $table_w) {
+        $array_prob[$i][0] = $array_prob[$i][0]/($norm_factor_u - $array_prob[$i][1] + $array_prob[$i][0]);
+        $array_prob[$i][1] = $array_prob[$i][1]/($norm_factor_l - $array_prob[$i][0] + $array_prob[$i][1]);
+    }
+}
+
+sub print_prob_table {
+    for my $i (0 .. $table_w) {
+        printf "%.4f ", $array_prob[$i][0];
+    }
+    print "\n";
+    for my $i (0 .. $table_w) {
+        printf "%.4f ", $array_prob[$i][1];
+    }
+    print "\n";
+}
+
+sub getSoundBounds {
+    my $low_index=0;
+    my $hi_index=64;
+    
+    for my $i (0 .. $table_w) {
+        if ($array_prob[$i][1] > 0) {
+            $low_index = $i;
+            last;
+        } 
+    }
+    for my $i ($table_w .. 0) {
+        if ($array_prob[$i][1] > 0) {
+            $hi_index = $i;
+            last;
+        } 
+    }
+    my $p = 1;
+    while ($p > $cl) {
+        if($array_prob[$low_index][1] > $array_prob[$hi_index][1]) {
+            $p = $p - $array_prob[$hi_index][1];
+            $hi_index--;
+        } else {
+            $p = $p - $array_prob[$low_index][1];
+            $low_index++;
+        }
+    }
+    return $low_index, $hi_index;
 }
 
 sub xor_tree {
@@ -760,7 +921,7 @@ sub MBoundExhaustUpToC_crypto {
     }
     end_solver();
     }
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
