@@ -1,3 +1,5 @@
+SearchMC is an approximate model counter using XOR streamlining techniques. SearchMC takes an SMT formula or a CNF formula as input and gives a lower and a upper bound of the true model influence (log base 2 of the true model counts) with a given confidence level. 
+
 # Build particle-filter.c
 ```
 $ gcc asa241.c particle-filter.c -o particle-filter -lm
@@ -6,7 +8,7 @@ This binary file (``particle-filter``) should be in SearchMC folder.
 
 # Install STP
 
-STP relies on a few dependencies, namely boost, flex/bison and minisat. Installing the required header files and binaries can be achieved through the following. (Tested on Ubuntu 14.04.)
+SearchMC uses STP for converting an SMT formula to a CNF formula. STP relies on a few dependencies, namely boost, flex/bison and minisat. Installing the required header files and binaries can be achieved through the following. (Tested on Ubuntu 14.04.)
 ```
 $ sudo apt-get install cmake bison flex libboost-all-dev python perl
 ```
