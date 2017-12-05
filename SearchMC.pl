@@ -315,9 +315,7 @@ sub check_options {
     }
     
     if($solver eq "cryptominisat") {
-        if ($input_type ne "cnf") {
-			die "$solver only works with CNF formula\n";
-		}
+
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
 		if ($input_type eq "cnf") {
 			die "$solver only supported with SMT-LIB2 formula\n";
