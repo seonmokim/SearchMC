@@ -70,14 +70,14 @@ my $alpha = 0;
 my $mode = "batch";
 my $solver = "cryptominisat";
 my $verbose = 0;
-my $save_CNF_files = '';
+my $save_files = '';
 my $xor_num_vars;
 my $help = '';
 my $input_type = "cnf";
 my $proj_flag = '';
 my @output_names;
 my $output_name;
-my $term_cond = 1;
+my $term_cond = 0;
 my $random_seed = undef;
 
 GetOptions ("thres=f" => \$thres,
@@ -86,33 +86,36 @@ GetOptions ("thres=f" => \$thres,
 "mode=s"   => \$mode,
 "verbose=i"  => \$verbose,
 "input_type=s" => \$input_type,
-"save_CNF_files" => \$save_CNF_files,
+"save_files" => \$save_files,
 "xor_num_vars=i" => \$xor_num_vars,
 "output_name=s" => \@output_names,
 "solver=s" => \$solver,
 "random_seed=i" => \$random_seed,
 "true_result=f" => \$true_result,
-"term_cond=f" => \$term_cond,
+"term_cond=i" => \$term_cond,
+"max_sup=i" => \$prior_w,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
 if (defined $random_seed) {
     srand($random_seed);
 }
+
+mkdir ($temp_dir) unless(-d $temp_dir);
+
 my($filename, $base_filename);
 
 if (@ARGV == 1) {
     $filename = $ARGV[0];
     $base_filename = basename($filename);
-    copy($filename,"./$base_filename"); 
-    $filename = "./$base_filename";
+    copy($filename,"$temp_dir/$base_filename"); 
+    $filename = "$temp_dir/$base_filename";
 } else {
     check_options(); # This handles -help
     die "One non-option argument required, input file name\n";
 }
 
 check_options();
-mkdir ($temp_dir) unless(-d $temp_dir);
 
 my $start = time();
 
@@ -130,10 +133,14 @@ if($input_type eq "smt" && $solver eq "cryptominisat") {
     #read_smt_file_inc($filename);
 } elsif ($input_type eq "cnf" && ($solver eq "cryptominisat")) {
     read_cnf_file($filename);
+    unlink $filename;
 }
 	 
 
-$prior_w = scalar @vars;
+if (not defined $prior_w) {
+    $prior_w = scalar @vars;
+}
+
 my $delta = $prior_w;
 
 $cl = $cl+(1-$cl) * $alpha;
@@ -214,7 +221,7 @@ while ($delta > $thres)
         }
     }
 }
-if(!$save_CNF_files) {
+if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 
@@ -276,23 +283,24 @@ sub convert_smt_to_cnf {
 
 sub check_options {
     if ($help) {
-        print "Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
+        print "        Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
         For example, ./SearchMC.pl -cl=0.9 -thres=2 -verbose=1 test.cnf\n
-        \n
+
         Input Parameters:\n
-        -cl=<cl value>: confidence level value (0 < cl < 1)\n
-        -thres=<threshold value>: threshold value. The algorithm terminates when the interval is less than this value (0 < thres < output bits)\n
+        -cl=<cl value>: confidence level value (0 < cl < 1)
+        -thres=<threshold value>: threshold value. The algorithm terminates when the interval is less than this value (0 < thres < output bits)
         \n
         Options:\n
-        -term-cond=<termination condition>: set the termination condition with 0 (unprovable soundness) or 1 (provable soundness, default)
+        -term-cond=<termination condition>: set the termination condition with 0 (unprovable soundness, default) or 1 (provable soundness)
         -input_type=<input file format>: cnf (default), smt 
-        -output_name=<output name>: output variable name (eg. x, y) for projection, SMT only\n
-        -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)\n
-        -verbose=<verbose level>: set verbose level; 0, 1(default)\n
-        -mode=<solver mode>: solver mode; batch (default), inc (incremental mode, SMT only)\n
-        -save_CNF_files : store all CNF files\n
-        -true_result=<influence>: expected result for statistics";
-        last;
+        -output_name=<output name>: output variable name (eg. x, y) for projection, SMT only
+        -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)
+        -verbose=<verbose level>: set verbose level; 0, 1(default)
+        -mode=<solver mode>: solver mode; batch (default), inc (incremental mode, SMT only)
+        -save_files : store all CNF files
+        -max_sup : set a maximum support bound for an initial uniform distribution   
+        -true_result=<influence>: expected result for statistics\n";
+        exit;
     }
     if ($cl && $thres) {
 		if ($cl <= 0 && $cl > 1) {
@@ -306,11 +314,7 @@ sub check_options {
         die "cl and thres values needed\n"
     }
     
-    if($mode eq "batch") {
-        
-    } elsif ($mode eq "inc") {
-		
-	} else {
+    if (not(($mode eq "batch") || ($mode eq "inc"))) {
         die "Invalid mode: $mode\n";
     }
     
@@ -379,7 +383,7 @@ sub read_smt_file {
     open(my $fh1, '<:encoding(UTF-8)', $filename)
     or die "Could not open file '$filename' $!";
     my $file_name = basename($filename);
-    
+
     open(my $fh2, '>', "$temp_dir/org-$file_name");
     
 
@@ -413,7 +417,7 @@ sub read_smt_file {
         print $fh2 "(concat (_ $temp) $output_name)\n";
 	}
 
-	
+	$prior_w = $numVariables;
 	
 	if(!$numVariables) {
 		die "Output $output_name not found\n"; 
@@ -456,6 +460,7 @@ sub read_smt_file_inc {
 
 sub run_solver {
     my($filename, $c, $solver) = @_;
+
     if ($solver eq "cryptominisat") {
 		$solver_pid = open2(*OUT, *IN, 
 		                "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
@@ -671,7 +676,7 @@ sub add_neq_constraints_smt {
     print $fh1 "(check-sat)\n";
     print $fh1 "(get-value ($output_name))\n";
     close $fh1;
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $filename_out;
@@ -695,7 +700,7 @@ sub MBoundExhaustUpToC_crypto {
         }
         end_solver();
     }
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
@@ -734,13 +739,14 @@ sub MBoundExhaustUpToC_z3_batch {
 		}
 		end_solver();
 	}
-	if(!$save_CNF_files) {
+	if(!$save_files) {
         unlink $filename_cons;
     }
 	return $solns;
 }
 
 sub MBoundExhaustUpToC_smt_batch {
+
     my($filename, $width, $num_xor_vars, $k, $c, $iter, $output_name) = @_;
     my $solns = 0;
     my $filename_cons =
@@ -778,7 +784,7 @@ sub MBoundExhaustUpToC_smt_batch {
 				  $ce, $iter, $k, $width, $output_name);
 	end_solver();
     }
-    if(!$save_CNF_files) {
+    if(!$save_files) {
         unlink $filename_cons;
     }
     return $solns;
