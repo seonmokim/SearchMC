@@ -1,2 +1,2 @@
 This is the directory where all the temporary files are saved. All the files in this directory will be deleted after the execution. 
-If you do not want to delete the temporary files, give the "-save_CNF_files" option.
+If you do not want to delete the temporary files, give the "-save_files" option.
