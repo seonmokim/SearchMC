@@ -224,7 +224,7 @@ while ($delta > $thres)
 if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
-
+unlink "posterior_$$.dat";
 my $end = time();
 
 if ($k == 0 ) {
