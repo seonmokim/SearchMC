@@ -1,6 +1,5 @@
-builds
-cryptominisat4
+cryptominisat
 stp-2.1.2
 z3
-one-step
+particle-filter
 mathsat

@@ -195,7 +195,7 @@ while ($delta > $thres)
     } else {
         ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $prior_w);
         my $sub_end = time();
-        if ($nSat < $c && $c > 17) {
+        if ($nSat < $c && $c > 40) {
             $epsilon = (8.4 + sqrt(70.56 + 33.6*$c)) / (2 * $c);
             $sound_lb = $k+log2($nSat)+log2(1-$epsilon);
             $sound_ub = $k+log2($nSat)+log2(1+$epsilon);
@@ -233,17 +233,27 @@ if ($k == 0 ) {
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
 } else {
-    printf "$base_filename %.4f %.4f %.4f %.4f $sat_cnt %.4f", $sound_lb, $sound_ub, $lb, $ub, $end - $start;
-    if (defined $true_result) {
-	my $is_correct = ($true_result >= $lb && $true_result <= $ub);
-	print " ", ($is_correct ? "correct" : "wrong");
-	printf " %.4f", abs($true_result-$mu);
+    if($term_cond == 0) {
+        printf "$base_filename %.4f %.4f $sat_cnt %.4f", $lb, $ub, $end - $start;
+    } else {
+        printf "$base_filename %.4f %.4f $sat_cnt %.4f", $sound_lb, $sound_ub, $end - $start;
     }
+    if (defined $true_result) {
+        my $is_correct = ($true_result >= $lb && $true_result <= $ub);
+        print " ", ($is_correct ? "correct" : "wrong");
+        printf " %.4f ", abs($true_result-$mu);
+        if($term_cond == 0) {
+            printf "%.4f %.4f", $lb-$true_result, $ub-$true_result;
+        } else {
+            printf "%.4f %.4f", $sound_lb-$true_result, $sound_ub-$true_result;
+        }
+    }
+    
     print "\n";
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
-    printf "Result: Sound Lower Bound = %.4f with 86%%\n",$sound_lb;
-    printf "Result: Sound Upper Bound = %.4f with 86%%\n",$sound_ub;
+    printf "Result: Sound Lower Bound = %.4f with 60%%\n",$sound_lb;
+    printf "Result: Sound Upper Bound = %.4f with 60%%\n",$sound_ub;
     print "Result: Filename = $base_filename\n";
     print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
     print "Result: #Sat Query = $sat_cnt\n";
@@ -285,7 +295,6 @@ sub check_options {
     if ($help) {
         print "        Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
         For example, ./SearchMC.pl -cl=0.9 -thres=2 -verbose=1 test.cnf\n
-
         Input Parameters:\n
         -cl=<cl value>: confidence level value (0 < cl < 1)
         -thres=<threshold value>: threshold value. The algorithm terminates when the interval is less than this value (0 < thres < output bits)
@@ -303,7 +312,7 @@ sub check_options {
         exit;
     }
     if ($cl && $thres) {
-		if ($cl <= 0 && $cl > 1) {
+        if ($cl <= 0 && $cl > 1) {
 			die "Confidence level should be 0 < cl < 1";
 		}
 		if ($thres <= 0 && $thres > $prior_w) {
@@ -515,9 +524,9 @@ sub updateDist {
     }
     my $cmd_pid;
     if ($prior eq "particle") {
-        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -priorparticle posterior.dat -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -priorparticle posterior_$$.dat -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0 -pid $$");
     } else {
-        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0 -pid $$");
     }
 	my $line = <OUT2>;
 	($center, $new_sigma, $new_lb, $new_ub) = split ' ', $line;

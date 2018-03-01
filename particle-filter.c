@@ -46,7 +46,7 @@ double log_choose_small_k(double n, int k) {
 #define MAX_INFL 64
 #define SAMPLES_PER_BIT 10
 #define SAMPLES_PER_BITF ((double)SAMPLES_PER_BIT)
-#define NUM_SAMPLES (SAMPLES_PER_BIT*MAX_INFL)
+#define NUM_SAMPLES 500
 #define NUM_SAMPLESF ((double)SAMPLES_PER_BIT*MAX_INFL)
 
 struct map_prob {
@@ -472,6 +472,7 @@ int nVars = 64;
 int verb = 1;
 
 char *prior_file;
+char *pid;
 
 int main(int argc, char **argv) {
     int i;
@@ -539,7 +540,7 @@ int main(int argc, char **argv) {
                 exit(1);
             }
             k = val;
-	} else if (!strcmp(argv[i], "-nVars") && i + 1 < argc) {
+        } else if (!strcmp(argv[i], "-nVars") && i + 1 < argc) {
             char *arg = argv[++i];
             char *endptr;
             long val = strtol(arg, &endptr, 0);
@@ -559,6 +560,8 @@ int main(int argc, char **argv) {
                 exit(1);
             }
             verb = val;
+        } else if (!strcmp(argv[i], "-pid") && i + 1 < argc) {
+            pid = argv[++i];
         } else {
             fprintf(stderr, "Urecognized option `%s'\n", argv[i]);
             exit(1);
@@ -573,7 +576,7 @@ int main(int argc, char **argv) {
         assert(0);
     }
     
-    gnuplot_data("prior.dat", prior, NUM_SAMPLES);
+    //gnuplot_data("prior.dat", prior, NUM_SAMPLES);
     
     if (verb == 1){
         printf("Prior mean is %g\n", mean_pdf(prior));
@@ -591,7 +594,13 @@ int main(int argc, char **argv) {
         printf("Posterior stddev is %g\n", stddev_pdf(posterior));
     }
     getCDF(posterior);
-    gnuplot_data("posterior.dat", posterior, NUM_SAMPLES);
+    char posterior_filename[80];
+    strcpy(posterior_filename, "posterior_");
+    strcat(posterior_filename, pid);
+    strcat(posterior_filename, ".dat");
+    
+    
+    gnuplot_data(posterior_filename, posterior, NUM_SAMPLES);
 
     getBounds(cl);
 
