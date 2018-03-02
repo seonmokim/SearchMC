@@ -118,6 +118,7 @@ if (@ARGV == 1) {
 check_options();
 
 my $start = time();
+my $end;
 
 ## Read input file based on input type and solver
 if($input_type eq "smt" && $solver eq "cryptominisat") {
@@ -126,6 +127,7 @@ if($input_type eq "smt" && $solver eq "cryptominisat") {
     rename "./output_0.cnf", $filename;
     $base_filename = basename($filename);
     read_cnf_file($filename);
+    unlink $filename;
 } elsif ($input_type eq "smt" && ($solver eq "z3" || $solver eq "mathsat")
 	 && $mode eq "batch") {
     read_smt_file($filename);
@@ -187,9 +189,11 @@ while ($delta > $thres)
     }
     
     if ($k == 0 ) {
-	if ($verbose) {
+        if ($verbose) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
-	}
+        }
+        $end = time();
+        printf "$base_filename %.4f %.4f $sat_cnt %.4f\n", log2($nSat), log2($nSat), $end - $start;
         print "Result: Exact # of solutions = $nSat\n";
         last;
     } else {
@@ -204,12 +208,12 @@ while ($delta > $thres)
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
             printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
             printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
-	    if (defined $true_result) {
-		my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
-		my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
-		printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
-		printf "$exhaust_cnt: Error = %.4f\n", abs($true_result-$mu_prime);
-	    }
+            if (defined $true_result) {
+                my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
+                my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
+                printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
+                printf "$exhaust_cnt: Error = %.4f\n", abs($true_result-$mu_prime);
+	        }
             printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
         }
         $mu = $mu_prime;
@@ -225,7 +229,7 @@ if(!$save_files) {
     unlink "$temp_dir/org-$base_filename";
 }
 unlink "posterior_$$.dat";
-my $end = time();
+$end = time();
 
 if ($k == 0 ) {
     print "Result: Filename = $base_filename\n";
@@ -374,6 +378,7 @@ sub read_cnf_file {
 			@vars = split ' ', $line;
 			splice @vars, scalar(@vars)-1, scalar(@vars);
 			splice @vars, 0, 2;
+            print $fh2 "$line";
 		} else {
             print $fh2 "$line";
         }
@@ -868,7 +873,7 @@ sub ComputeCandK {
     my ($mu, $sig, $c_max, $numVariables) = @_;
     my $c = ceil(((2**$sig+1)/(2**$sig-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
-    my $k = floor($mu - (log2($c)*0.75));
+    my $k = floor($mu - (log2($c)*0.5));
     if ($k <= 0) {
         $k = 0;
         $c = $c_max;
