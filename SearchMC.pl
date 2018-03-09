@@ -122,9 +122,9 @@ my $end;
 
 ## Read input file based on input type and solver
 if($input_type eq "smt" && $solver eq "cryptominisat") {
-    convert_smt_to_cnf($filename);
+    my $cpid = convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
-    rename "./output_0.cnf", $filename;
+    rename "./output_$cpid.cnf", $filename;
     $base_filename = basename($filename);
     read_cnf_file($filename);
     unlink $filename;
@@ -293,6 +293,7 @@ sub convert_smt_to_cnf {
     close IN;
     close OUT;
     waitpid($converter_pid, 0);
+    return $converter_pid;
 }
 
 sub check_options {
