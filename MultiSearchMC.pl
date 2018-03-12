@@ -12,6 +12,11 @@ use List::Util qw(sum);
 my $filename = $ARGV[1];
 my $nThreads = $ARGV[0];
 
+
+my $base_filename = basename($filename);
+copy($filename,$base_filename); 
+$filename = $base_filename;
+    
 my $process_q = Thread::Queue -> new(); 
 
 my $searchmc = "./SearchMC.pl";
