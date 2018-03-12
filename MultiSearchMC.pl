@@ -8,6 +8,8 @@ use threads::shared;
 use IPC::Open2;
 use Thread::Queue;
 use List::Util qw(sum);
+use File::Basename;
+use File::Copy;
 
 my $filename = $ARGV[1];
 my $nThreads = $ARGV[0];
