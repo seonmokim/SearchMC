@@ -53,7 +53,7 @@ for (my $i = 0; $i < $nThreads; $i++) {
 }
 
 my $upper_bound = sum(@upperbounds);
-printf ("Sound Upper Bound: %.4f\n", $upper_bound);
+printf ("Total Sound Upper Bound: %.4f\n", $upper_bound);
 
 #print "\n";
 #print scalar @upperbounds;
@@ -70,6 +70,7 @@ sub initThreads {
 sub runSearchMC {
     while (my $filename = $process_q ->dequeue()) {
         my @info = split /-/, $filename;
+	printf ("Running command: $searchmc -cl=0.9 -thres=2 -verbose=0 -input_type=smt -solver=cryptominisat -term_cond=1 -output_name=influence-target-$info[3] $filename | grep -v Result\n");
         my $cmd_pid = open2(*OUT, *IN, "$searchmc -cl=0.9 -thres=2 -verbose=0 -input_type=smt -solver=cryptominisat -term_cond=1 -output_name=influence-target-$info[3] $filename | grep -v Result");
         my $line = <OUT>;
         my @result = split ' ', $line;
@@ -77,8 +78,9 @@ sub runSearchMC {
         close OUT;
         waitpid($cmd_pid, 0);    
 
-        push @upperbounds, $result[4];
-        unlink $filename;
+        push @upperbounds, $result[2];
+	printf ("$filename: Upper Bound %.4f\n", $result[2]);
+        #unlink $filename;
         #print scalar @upperbounds;
     }
 }
