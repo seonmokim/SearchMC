@@ -10,6 +10,7 @@ use Thread::Queue;
 use List::Util qw(sum);
 use File::Basename;
 use File::Copy;
+use Time::HiRes qw(time);
 
 my $filename = $ARGV[1];
 my $nThreads = $ARGV[0];
@@ -29,6 +30,8 @@ close $handle;
 
 my @targets;
 my @upperbounds :shared;
+my $start :shared;
+my $end :shared;
 
 for my $line (@lines) {
     if ($line =~ /\s*\(declare-fun\s+influence-target-([0-9]*)\s*/) {
@@ -42,6 +45,7 @@ $process_q -> end();
 for my $target_var (@targets) {
     system("./smtslice.pl $target_var $filename");
 }
+$start = time();
 my @jobs = initThreads();
 
 for (my $i = 0; $i < $nThreads; $i++) {
@@ -51,9 +55,10 @@ for (my $i = 0; $i < $nThreads; $i++) {
 for (my $i = 0; $i < $nThreads; $i++) {
     $jobs[$i]->join();
 }
-
+$end = time();
 my $upper_bound = sum(@upperbounds);
 printf ("Total Sound Upper Bound: %.4f\n", $upper_bound);
+printf ("Total Running Time: %.4f s\n", $end - $start);
 
 #print "\n";
 #print scalar @upperbounds;
@@ -79,8 +84,8 @@ sub runSearchMC {
         waitpid($cmd_pid, 0);    
 
         push @upperbounds, $result[2];
-	printf ("$filename: Upper Bound %.4f\n", $result[2]);
-        #unlink $filename;
+	printf ("$filename: Upper Bound is %.4f\n", $result[2]);
+        unlink $filename;
         #print scalar @upperbounds;
     }
 }
