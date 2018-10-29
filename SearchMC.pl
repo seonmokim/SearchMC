@@ -187,7 +187,6 @@ while ($delta > $thres)
     } else {
         $sat_cnt=$sat_cnt+$nSat+1;
     }
-    
     if ($k == 0 ) {
         if ($verbose) {
             printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
@@ -199,7 +198,7 @@ while ($delta > $thres)
     } else {
         ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $prior_w);
         my $sub_end = time();
-        if ($nSat < $c && $c > 40) {
+        if ($nSat < $c && $c > 40 && $nSat > 0) {
             $epsilon = (8.4 + sqrt(70.56 + 33.6*$c)) / (2 * $c);
             $sound_lb = $k+log2($nSat)+log2(1-$epsilon);
             $sound_ub = $k+log2($nSat)+log2(1+$epsilon);
@@ -874,6 +873,7 @@ sub ComputeCandK {
     my ($mu, $sig, $c_max, $numVariables) = @_;
     my $c = ceil(((2**$sig+1)/(2**$sig-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
+    print "c = $c\n";
     my $k = floor($mu - (log2($c)*0.5));
     if ($k <= 0) {
         $k = 0;
