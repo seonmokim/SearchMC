@@ -873,7 +873,6 @@ sub ComputeCandK {
     my ($mu, $sig, $c_max, $numVariables) = @_;
     my $c = ceil(((2**$sig+1)/(2**$sig-1))**2);
     #my $c = ceil((2**(2*$sigma)+1)/(2**(2*$sigma)-1));
-    print "c = $c\n";
     my $k = floor($mu - (log2($c)*0.5));
     if ($k <= 0) {
         $k = 0;
