@@ -10,13 +10,13 @@ SearchMC is an approximate model counter using XOR streamlining techniques. Sear
 
 ## Install SearchMC
 
-* Build particle-filter.c
+### Build particle-filter.c
 ```
 $ gcc asa241.c particle-filter.c -o particle-filter -lm
 ```
 This binary file (``particle-filter``) should be in SearchMC folder.
 
-* Install STP
+### Install STP
 
 SearchMC uses STP for converting an SMT formula to a CNF formula. STP relies on a few dependencies, namely boost, flex/bison and minisat. Installing the required header files and binaries can be achieved through the following. (Tested on Ubuntu 14.04.)
 ```
@@ -42,7 +42,7 @@ $ make
 ```
 Then, copy the STP binary file (``stp-2.1.2``) into SearchMC folder.
 
-* Install Cryptominisat2 with projection
+### Install Cryptominisat2 with projection
 
 Make sure to build with Gaussian Eliminiation.
 ```
@@ -54,7 +54,7 @@ $ make
 ```
 Then, copy the Cryptominisat binary file (``cryptominisat``) into SearchMC folder.
 
-* Install Z3
+### Install Z3
 
 Make sure to build with Gaussian Eliminiation.
 ```
@@ -67,13 +67,13 @@ $ sudo make install
 ```
 Then, copy the Z3 binary file (``z3``) into SearchMC folder.
 
-* Install MathSAT5
+### Install MathSAT5
 
 MathSAT5 is available at http://mathsat.fbk.eu/
 
 Copy the MathSAT5 binary file (``mathsat``) into SearchMC folder.
 
-* In-place version of build instructions
+### In-place version of build instructions
 
 It is also possible to compile all of the prerequisite software
 in-place if you cannot or do not wish to install anything into your
@@ -118,6 +118,7 @@ $ cmake -DUSE_GAUSS=ON -DM4RI_LIBRARIES=../../m4ri/install/lib/libm4ri.a -DM4RI_
 $ make
 $ cp cryptominisat5 ../../../cryptominisat4
 ```
+
 
 ## Contacts
 
