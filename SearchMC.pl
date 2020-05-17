@@ -428,7 +428,7 @@ sub read_smt_file {
         $output_name = join('_',@output_names);
         print $fh2 "(declare-fun $output_name () (_ BitVec $numVariables))\n";
         my $temp = join(' ',@output_names);
-        print $fh2 "(concat (_ $temp) $output_name)\n";
+        print $fh2 "(assert (= (concat $temp) $output_name))\n";
 	}
 
 	$prior_w = $numVariables;

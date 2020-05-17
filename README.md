@@ -48,7 +48,8 @@ Make sure to build with Gaussian Eliminiation.
 ```
 $ git clone https://github.com/seonmokim/cryptominisat2.git
 $ cd cryptominisat
-$ mkdir build && cd build
+$ make -f Makefile.cvs
+$ cd build
 $ ../configure
 $ make
 ```
