@@ -13,7 +13,7 @@ use File::Copy;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-my $cryptominisat = "./cryptominisat";
+my $cryptominisat = "./cryptominisat5";
 my $z3 ="./z3";
 my $mathsat = "./mathsat";
 my $mathsat_opts =
@@ -58,6 +58,7 @@ my $nSat;
 my $true_result;
 
 my $prior_w;
+my $min_sup;
 my $numVariables = 0;
 my $numClauses = 0;
 my $c_max = int(2**30);
@@ -93,7 +94,8 @@ GetOptions ("thres=f" => \$thres,
 "random_seed=i" => \$random_seed,
 "true_result=f" => \$true_result,
 "term_cond=i" => \$term_cond,
-"max_sup=i" => \$prior_w,
+"min_sup=f" => \$min_sup,
+"max_sup=f" => \$prior_w,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
@@ -143,13 +145,17 @@ if (not defined $prior_w) {
     $prior_w = scalar @vars;
 }
 
-my $delta = $prior_w;
+if (not defined $min_sup) {
+    $min_sup = 0;
+}
+
+my $delta = $prior_w - $min_sup;
 
 $cl = $cl+(1-$cl) * $alpha;
 
 ## initial round
 if ($numVariables > $prior_w / 2) {
-    $mu = $prior_w / 2;
+    $mu = ($prior_w + $min_sup) / 2;
 } else {
     $mu = $numVariables / 2;
 }
@@ -158,7 +164,7 @@ $k = sprintf("%.0f", $mu);
 $c = 1;
 
 my $epsilon;
-my $sound_lb=0;
+my $sound_lb=$min_sup;
 my $sound_ub=$prior_w;
 
 while ($delta > $thres)
@@ -196,7 +202,7 @@ while ($delta > $thres)
         print "Result: Exact # of solutions = $nSat\n";
         last;
     } else {
-        ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $prior_w);
+        ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $min_sup, $prior_w);
         my $sub_end = time();
         if ($nSat < $c && $c > 40 && $nSat > 0) {
             $epsilon = (8.4 + sqrt(70.56 + 33.6*$c)) / (2 * $c);
@@ -319,7 +325,7 @@ sub check_options {
         if ($cl <= 0 && $cl > 1) {
 			die "Confidence level should be 0 < cl < 1";
 		}
-		if ($thres <= 0 && $thres > $prior_w) {
+		if ($thres <= 0 && $thres > $prior_w - $min_sup ) {
 			die "Threshold should be 0 < thres < output bits";
 		}
     
@@ -430,9 +436,9 @@ sub read_smt_file {
         my $temp = join(' ',@output_names);
         print $fh2 "(assert (= (concat $temp) $output_name))\n";
 	}
-
-	$prior_w = $numVariables;
-	
+        if (not defined $prior_w) {
+            $prior_w = $numVariables;
+        }	
 	if(!$numVariables) {
 		die "Output $output_name not found\n"; 
 	}
@@ -476,8 +482,9 @@ sub run_solver {
     my($filename, $c, $solver) = @_;
 
     if ($solver eq "cryptominisat") {
-		$solver_pid = open2(*OUT, *IN, 
-		                "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
+	$solver_pid = open2(*OUT, *IN, 
+               "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
+           #       "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
 	} elsif ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
 	} elsif ($solver eq "mathsat") {
@@ -486,6 +493,7 @@ sub run_solver {
 }
 
 sub open_solver_inc {
+
 	my($solver) = @_;
 	if ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 --in");
@@ -502,7 +510,7 @@ sub end_solver {
 }
 
 sub updateDist {
-    my($mu, $sigma, $c, $xor, $nSat, $cl, $nVars) = @_;
+    my($mu, $sigma, $c, $xor, $nSat, $cl, $min_sup, $max_sup) = @_;
     my $center;
     my $new_sigma;
     my $new_lb;
@@ -529,9 +537,9 @@ sub updateDist {
     }
     my $cmd_pid;
     if ($prior eq "particle") {
-        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -priorparticle posterior_$$.dat -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0 -pid $$");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -priorparticle posterior_$$.dat -k $xor $option $nSat -cl $cl -min_sup $min_sup -max_sup $max_sup -verb 0 -pid $$");
     } else {
-        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -nVars $nVars -verb 0 -pid $$");
+        $cmd_pid = open2(*OUT2, *IN2, "./particle-filter -prior $prior -k $xor $option $nSat -cl $cl -min_sup $min_sup -max_sup $max_sup -verb 0 -pid $$");
     }
 	my $line = <OUT2>;
 	($center, $new_sigma, $new_lb, $new_ub) = split ' ', $line;

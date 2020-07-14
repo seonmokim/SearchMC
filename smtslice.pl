@@ -60,8 +60,8 @@ FOO1: {
             $index++;
         }
         @taint_vars = @new_taint_vars;
-#        print join(", ", @new_taint_vars);
-#        print "\n";
+        #print join(", ", @new_taint_vars);
+        #print "\n";
         my $b = sum(@taint_lines);
         if ($a == $b) {
             last FOO1;
@@ -146,7 +146,7 @@ sub parse_vars {
     my @words = split / |\(|\)/, $input_line;
     for my $word (@words) {
         if ($word =~ /^cond/) {
-        } elsif ($word =~ /^[A-Za-z]/) {
+        } elsif ($word =~ /^[-A-Za-z]/) {
             if ( grep( /^$word$/, @vars ) ) {
                 push @parsed_vars, $word;
             }

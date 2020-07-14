@@ -137,10 +137,10 @@ double stddev_particle(struct map_prob *ary) {
     return sqrt(variance_particle(ary));
 }
 
-void setup_prior_uniform(int nVars) {
+void setup_prior_uniform(double min, double max) {
     int i;
     for (i = 0; i < NUM_SAMPLES; i++) {
-        prior[i].influence = (double)(nVars*i)/NUM_SAMPLES;
+        prior[i].influence = min + (max-min)*i/NUM_SAMPLES;
         prior[i].prob = 1.0;
     }
     normalize(prior, NUM_SAMPLES);
@@ -266,7 +266,7 @@ void getCDF (struct map_prob *a) {
     }
     normalize_cdf(cdf, NUM_SAMPLES);
 }
-void sampling(struct map_prob *a, struct map_prob *b, int nVars) {
+void sampling(struct map_prob *a, struct map_prob *b, double min, double max) {
     getCDF(a);
     int i;
     for (i = 0; i < NUM_SAMPLES; i++) {
@@ -286,9 +286,9 @@ void sampling(struct map_prob *a, struct map_prob *b, int nVars) {
             hi = fabs(r1);
         }
         if (index == 0) {
-            b[i].influence = linear_intep(0, a[index].influence, lo, hi);
+            b[i].influence = linear_intep(min, a[index].influence, lo, hi);
         } else if (index == NUM_SAMPLES + 1) {
-             b[i].influence = linear_intep(a[index].influence, nVars, lo, hi);
+             b[i].influence = linear_intep(a[index].influence, max, lo, hi);
         } else {
             if ( a[index-1].prob > a[index].prob) {
                 b[i].influence = linear_intep(a[index-1].influence, a[index].influence, hi, lo);
@@ -467,7 +467,8 @@ int k = 1;
 
 double center = 32;
 double cl = 0;
-int nVars = 64;
+double min_sup = 0;
+double max_sup = 64;
 
 int verb = 1;
 
@@ -540,16 +541,26 @@ int main(int argc, char **argv) {
                 exit(1);
             }
             k = val;
-        } else if (!strcmp(argv[i], "-nVars") && i + 1 < argc) {
+        } else if (!strcmp(argv[i], "-min_sup") && i + 1 < argc) {
             char *arg = argv[++i];
             char *endptr;
             long val = strtol(arg, &endptr, 0);
             if (endptr == arg || arg < 0) {
-                fprintf(stderr, "Argument to -nVars should be "
+                fprintf(stderr, "Argument to -min should be "
                         "a non-negative integer\n");
                 exit(1);
             }
-            nVars = val;
+            min_sup = val;
+        } else if (!strcmp(argv[i], "-max_sup") && i + 1 < argc) {
+            char *arg = argv[++i];
+            char *endptr;
+            long val = strtol(arg, &endptr, 0);
+            if (endptr == arg || arg < 0) {
+                fprintf(stderr, "Argument to -max should be "
+                        "a non-negative integer\n");
+                exit(1);
+            }
+            max_sup = val;
         } else if (!strcmp(argv[i], "-verb") && i + 1 < argc) {
             char *arg = argv[++i];
             char *endptr;
@@ -569,7 +580,7 @@ int main(int argc, char **argv) {
     }
     
     if (prior_type == PRIOR_UNIFORM) {
-        setup_prior_uniform(nVars);
+        setup_prior_uniform(min_sup, max_sup);
     } else if (prior_type == PRIOR_PARTICLE) {
         setup_prior_particle(prior_file);
     } else {
@@ -588,7 +599,7 @@ int main(int argc, char **argv) {
     } else if (update_mode == UPDATE_ATLEAST) {
         estimate_posterior_ge_n(k, nSat, prior, prior);
     }
-    sampling(prior, posterior, nVars);
+    sampling(prior, posterior, min_sup, max_sup);
     if (verb == 1){
         printf("Posterior mean is %g\n", mean_pdf(posterior));
         printf("Posterior stddev is %g\n", stddev_pdf(posterior));
