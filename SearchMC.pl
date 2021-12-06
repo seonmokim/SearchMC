@@ -368,26 +368,26 @@ sub read_cnf_file {
     open(my $fh2, '>', "$temp_dir/org-$base_filename");
     my @temp;
     while(my $line = <$fh1>) {
-        if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
-            print $fh2 "$line";
-            $numVariables = $1;
-            $numClauses = $2;
-            if(@vars) {
-                my $proj = join(" ", @vars);
-                print $fh2 "c ind $proj 0\n";
-            } else {
-                @vars = (1 .. $numVariables);
-            }
-        } elsif ($line =~ /^\s*$/) {
-			
-		} elsif ($line =~ /^c\s+ind/) {
-			@vars = split ' ', $line;
-			splice @vars, scalar(@vars)-1, scalar(@vars);
-			splice @vars, 0, 2;
-            print $fh2 "$line";
-		} else {
-            print $fh2 "$line";
+      if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
+        print $fh2 "$line";
+        $numVariables = $1;
+        $numClauses = $2;
+        if(@vars) {
+          my $proj = join(" ", @vars);
+          print $fh2 "c ind $proj 0\n";
+        } else {
+          @vars = (1 .. $numVariables);
         }
+      } elsif ($line =~ /^\s*$/) {
+      } elsif ($line =~ /^c\s+ind/) {
+        @temp = split ' ', $line;
+        splice @temp, scalar(@temp)-1, scalar(@temp);
+        splice @temp, 0, 2;
+        push @vars, @temp;
+        print $fh2 "$line";
+      } else {
+        print $fh2 "$line";
+      }
     }
     if($xor_num_vars) {
     } else {
