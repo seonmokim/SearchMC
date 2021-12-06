@@ -18,6 +18,10 @@ my $index=0;
 my $line;
 my @taint_lines;
 
+my @taint_vars;
+my @new_taint_vars;
+my @cond_taint_vars;
+
 for $line (@lines) {
     $taint_lines[$index] = 0;
     if ($line =~ /\s*\(declare-fun\s+(\S+)\s*/) {
@@ -26,8 +30,9 @@ for $line (@lines) {
     } elsif ($line =~ /\s*\(assert\s+/){
         if ($line =~ /\s*\(assert\s+true/){
             $taint_lines[$index] = 1;
-        } elsif ($line =~ /\s*\(assert\s+true/){
+        } elsif ($line =~ /$target[\s+)]/){
             $taint_lines[$index] = 1;
+            push @taint_vars, parse_vars($line);
         }
     } else {
         $taint_lines[$index] = 1;
@@ -35,10 +40,9 @@ for $line (@lines) {
     $index++;
 }
 
-my @taint_vars;
-push @taint_vars, $target;
-my @new_taint_vars;
-my @cond_taint_vars;
+@taint_vars = uniq(@taint_vars);
+#print join(", ", @taint_vars);
+#print "\n";
 
 #loop for finding tainted lines
 FOO1: {
@@ -60,8 +64,8 @@ FOO1: {
             $index++;
         }
         @taint_vars = @new_taint_vars;
-        #print join(", ", @new_taint_vars);
-        #print "\n";
+        print join(", ", @new_taint_vars);
+        print "\n";
         my $b = sum(@taint_lines);
         if ($a == $b) {
             last FOO1;
