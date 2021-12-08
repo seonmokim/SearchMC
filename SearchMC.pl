@@ -13,7 +13,7 @@ use File::Copy;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-my $cryptominisat = "./cryptominisat5";
+my $cryptominisat = "./cryptominisat";
 my $z3 ="./z3";
 my $mathsat = "./mathsat";
 my $mathsat_opts =
@@ -492,8 +492,8 @@ sub run_solver {
 
     if ($solver eq "cryptominisat") {
 	$solver_pid = open2(*OUT, *IN, 
-               "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
-           #       "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
+          #    "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
+                  "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
 	} elsif ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
 	} elsif ($solver eq "mathsat") {
