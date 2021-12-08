@@ -80,6 +80,7 @@ my @output_names;
 my $output_name;
 my $term_cond = 0;
 my $random_seed = undef;
+my $time_out;
 
 GetOptions ("thres=f" => \$thres,
 "cl=f"   => \$cl,
@@ -96,6 +97,7 @@ GetOptions ("thres=f" => \$thres,
 "term_cond=i" => \$term_cond,
 "min_sup=f" => \$min_sup,
 "max_sup=f" => \$prior_w,
+"time_out=i" => \$time_out,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
@@ -175,15 +177,15 @@ while ($delta > $thres)
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
         if($mode eq "inc") {
-			read_smt_file_inc($filename);
-            $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
-            end_solver();
+          read_smt_file_inc($filename);
+          $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
+          end_solver();
         } elsif($mode eq "batch") {
-            if ($solver eq "z3") {
-                $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
-            } else {
-                $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
-            }
+          if ($solver eq "z3") {
+            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+          } else {
+            $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+          }
         }
     }
         
@@ -228,6 +230,13 @@ while ($delta > $thres)
         } else {
             $delta = $ub - $lb;
         }
+        if ($time_out){
+          $end = time();
+          if ($end-$start > $time_out) {
+            last;
+          }
+        }
+
     }
 }
 if(!$save_files) {
