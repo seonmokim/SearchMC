@@ -13,7 +13,7 @@ use File::Copy;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-my $cryptominisat = "./cryptominisat";
+my $cryptominisat = "./cryptominisat5";
 my $z3 ="./z3";
 my $mathsat = "./mathsat";
 my $mathsat_opts =
@@ -45,18 +45,7 @@ my @vars;
 
 $| = 1;
 
-## Variables
-my $mu_prime;
-my $sigma_prime;
-my $mu;
-my $sigma;
-my $c;
-my $k;
-my $ub;
-my $lb;
-my $nSat;
 my $true_result;
-
 my $prior_w;
 my $min_sup;
 my $numVariables = 0;
@@ -64,9 +53,9 @@ my $numClauses = 0;
 my $c_max = int(2**30);
 
 ## Options
-my $cl;
-my $thres;
-my $alpha = 0;
+my $con_level;
+my $threshold;
+my $alpha = 0.5;
 
 my $mode = "batch";
 my $solver = "cryptominisat";
@@ -81,9 +70,10 @@ my $output_name;
 my $term_cond = 0;
 my $random_seed = undef;
 my $time_out;
+my $num_iter;
 
-GetOptions ("thres=f" => \$thres,
-"cl=f"   => \$cl,
+GetOptions ("thres=f" => \$threshold,
+"cl=f"   => \$con_level,
 "alpha=f"   => \$alpha,
 "mode=s"   => \$mode,
 "verbose=i"  => \$verbose,
@@ -98,6 +88,7 @@ GetOptions ("thres=f" => \$thres,
 "min_sup=f" => \$min_sup,
 "max_sup=f" => \$prior_w,
 "time_out=i" => \$time_out,
+"num_iter=i" => \$num_iter,
 "help|?" => \$help)
 or die("Error in command line arguments\n");
 
@@ -151,122 +142,148 @@ if (not defined $min_sup) {
     $min_sup = 0;
 }
 
-my $delta = $prior_w - $min_sup;
+my $ans = SearchMC($con_level, $threshold);
 
-$cl = $cl+(1-$cl) * $alpha;
+sub SearchMC {
+  my($cl, $thres) = @_;
 
-## initial round
-if ($numVariables > $prior_w / 2) {
+  my $mu_prime;
+  my $sigma_prime;
+  my $mu;
+  my $sigma;
+  my $c;
+  my $k;
+  my $nSat;
+  my $delta = $prior_w - $min_sup;
+
+  my $epsilon;
+  my $ub = 0;
+  my $lb = $prior_w;
+  my $sound_lb = $min_sup;
+  my $sound_ub = $prior_w;
+ 
+  $cl = $cl+(1-$cl) * $alpha;
+
+  ## initial round
+  if ($numVariables > $prior_w / 2) {
     $mu = ($prior_w + $min_sup) / 2;
-} else {
+  } else {
     $mu = $numVariables / 2;
-}
-$sigma = 1000;
-$k = sprintf("%.0f", $mu);
-$c = 1;
+  }
+  $sigma = 1000;
+  $k = sprintf("%.0f", $mu);
+  $c = 1;
 
-my $epsilon;
-my $sound_lb=$min_sup;
-my $sound_ub=$prior_w;
-
-while ($delta > $thres)
-{
+  while ($delta > $thres) {
     my $sub_start = time();
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
     if($solver eq "cryptominisat") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
-        if($mode eq "inc") {
-          read_smt_file_inc($filename);
-          $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
-          end_solver();
-        } elsif($mode eq "batch") {
-          if ($solver eq "z3") {
-            $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
-          } else {
-            $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
-          }
+      if($mode eq "inc") {
+        read_smt_file_inc($filename);
+        $nSat = MBoundExhaustUpToC_z3_inc($numVariables, $xor_num_vars, $k, $c, $output_name);
+        end_solver();
+      } elsif($mode eq "batch") {
+        if ($solver eq "z3") {
+          $nSat = MBoundExhaustUpToC_z3_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
+        } else {
+          $nSat = MBoundExhaustUpToC_smt_batch($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt, $output_name);
         }
+      }
     }
         
     $exhaust_cnt++;
     if($nSat == $c) {
-        $sat_cnt=$sat_cnt+$nSat;
+      $sat_cnt=$sat_cnt+$nSat;
     } else {
-        $sat_cnt=$sat_cnt+$nSat+1;
+      $sat_cnt=$sat_cnt+$nSat+1;
     }
     if ($k == 0 ) {
-        if ($verbose) {
-            printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
-        }
-        $end = time();
-        printf "$base_filename %.4f %.4f $sat_cnt %.4f\n", log2($nSat), log2($nSat), $end - $start;
-        print "Result: Exact # of solutions = $nSat\n";
-        last;
+      if ($verbose) {
+        printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
+      }
+        
+      $end = time();
+      printf "$base_filename %.4f %.4f $sat_cnt %.4f\n", log2($nSat), log2($nSat), $end - $start;
+      print "Result: Exact # of solutions = $nSat\n";
+      last;
     } else {
-        ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $min_sup, $prior_w);
-        my $sub_end = time();
-        if ($nSat < $c && $c > 40 && $nSat > 0) {
-            $epsilon = (8.4 + sqrt(70.56 + 33.6*$c)) / (2 * $c);
-            $sound_lb = $k+log2($nSat)+log2(1-$epsilon);
-            $sound_ub = $k+log2($nSat)+log2(1+$epsilon);
+      ($mu_prime, $sigma_prime, $lb, $ub) = updateDist($mu, $sigma, $c, $k, $nSat, $cl, $min_sup, $prior_w);
+      my $sub_end = time();
+      if ($nSat < $c && $c > 40 && $nSat > 0) {
+        $epsilon = (8.4 + sqrt(70.56 + 33.6*$c)) / (2 * $c);
+        $sound_lb = $k+log2($nSat)+log2(1-$epsilon);
+        $sound_ub = $k+log2($nSat)+log2(1+$epsilon);
+      } elsif ($nSat == $c) {
+        $sound_lb = $k - 2;
+      } elsif ($nSat == 0) {
+        $sound_ub = $k + 2;
+      } else {
+        $sound_lb = $k+log2($nSat) - 2;
+        $sound_ub = $k+log2($nSat) + 2;
+      }
+    
+      if ($verbose) {
+        printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
+        printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
+        printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
+        printf "$exhaust_cnt: Sound Lower Bound = %.4f, Sound Upper Bound = %.4f\n",$sound_lb, $sound_ub;
+        if (defined $true_result) {
+          my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
+          my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
+          printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
+          printf "$exhaust_cnt: Error = %.4f\n", abs($true_result-$mu_prime);
         }
-        if ($verbose) {
-            printf "$exhaust_cnt: Old Mu = %.4f, Old Sigma = %.4f, nSat = $nSat, k = $k, c = $c\n", $mu, $sigma;
-            printf "$exhaust_cnt: New Mu = %.4f, New Sigma = %.4f\n", $mu_prime, $sigma_prime;
-            printf "$exhaust_cnt: Lower Bound = %.4f, Upper Bound = %.4f\n",$lb, $ub;
-            if (defined $true_result) {
-                my $true_norm = ($true_result - $mu_prime)/$sigma_prime;
-                my $cdf_true = 0.5*(1 + erf($true_norm/sqrt(2)));
-                printf "$exhaust_cnt: CDF(true) = %.4f\n", $cdf_true;
-                printf "$exhaust_cnt: Error = %.4f\n", abs($true_result-$mu_prime);
-	        }
-            printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
+        printf("$exhaust_cnt: Running Time = %.4f\n", $sub_end - $sub_start);
+      }
+      $mu = $mu_prime;
+      $sigma = $sigma_prime;
+      if($term_cond == 1) {
+        $delta = $sound_ub - $sound_lb;
+      } else {
+        $delta = $ub - $lb;
+      }
+      if ($time_out) {
+        $end = time();
+        if ($end-$start > $time_out) {
+          last;
         }
-        $mu = $mu_prime;
-        $sigma = $sigma_prime;
-        if($term_cond == 1) {
-            $delta = $sound_ub - $sound_lb;
-        } else {
-            $delta = $ub - $lb;
+      }
+      if ($num_iter){
+        if ($num_iter == $exhaust_cnt) {
+          last;
         }
-        if ($time_out){
-          $end = time();
-          if ($end-$start > $time_out) {
-            last;
-          }
-        }
-
+      }
     }
-}
-if(!$save_files) {
-    unlink "$temp_dir/org-$base_filename";
-}
-unlink "posterior_$$.dat";
-$end = time();
+  }
+  if(!$save_files) {
+      unlink "$temp_dir/org-$base_filename";
+  }
+  unlink "posterior_$$.dat";
+  $end = time();
 
-if ($k == 0 ) {
+  if ($k == 0 ) {
     print "Result: Filename = $base_filename\n";
     print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
-} else {
+  } else {
     if($term_cond == 0) {
-        printf "$base_filename %.4f %.4f $sat_cnt %.4f", $lb, $ub, $end - $start;
+      printf "$base_filename %.4f %.4f $sat_cnt %.4f", $lb, $ub, $end - $start;
     } else {
-        printf "$base_filename %.4f %.4f $sat_cnt %.4f", $sound_lb, $sound_ub, $end - $start;
+      printf "$base_filename %.4f %.4f $sat_cnt %.4f", $sound_lb, $sound_ub, $end - $start;
     }
     if (defined $true_result) {
-        my $is_correct = ($true_result >= $lb && $true_result <= $ub);
-        print " ", ($is_correct ? "correct" : "wrong");
-        printf " %.4f ", abs($true_result-$mu);
-        if($term_cond == 0) {
-            printf "%.4f %.4f", $lb-$true_result, $ub-$true_result;
-        } else {
-            printf "%.4f %.4f", $sound_lb-$true_result, $sound_ub-$true_result;
-        }
+      my $is_correct = ($true_result >= $lb && $true_result <= $ub);
+      print " ", ($is_correct ? "correct" : "wrong");
+      printf " %.4f ", abs($true_result-$mu);
+      if($term_cond == 0) {
+        printf "%.4f %.4f", $lb-$true_result, $ub-$true_result;
+      } else {
+        printf "%.4f %.4f", $sound_lb-$true_result, $sound_ub-$true_result;
+      }
     }
-    
     print "\n";
     printf "Result: Lower Bound = %.4f\n",$lb;
     printf "Result: Upper Bound = %.4f\n",$ub;
@@ -276,6 +293,9 @@ if ($k == 0 ) {
     print "Result: #ExhaustUptoC Query = $exhaust_cnt\n";
     print "Result: #Sat Query = $sat_cnt\n";
     printf("Result: Running Time = %.4f\n", $end - $start);
+
+    return $mu;
+  }
 }
 
 sub convert_smt_to_cnf {
@@ -311,61 +331,60 @@ sub convert_smt_to_cnf {
 }
 
 sub check_options {
-    if ($help) {
-        print "        Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
-        For example, ./SearchMC.pl -cl=0.9 -thres=2 -verbose=1 test.cnf\n
-        Input Parameters:\n
-        -cl=<cl value>: confidence level value (0 < cl < 1)
-        -thres=<threshold value>: threshold value. The algorithm terminates when the interval is less than this value (0 < thres < output bits)
-        \n
-        Options:\n
-        -term-cond=<termination condition>: set the termination condition with 0 (unprovable soundness, default) or 1 (provable soundness)
-        -input_type=<input file format>: cnf (default), smt 
-        -output_name=<output name>: output variable name (eg. x, y) for projection, SMT only
-        -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)
-        -verbose=<verbose level>: set verbose level; 0, 1(default)
-        -mode=<solver mode>: solver mode; batch (default), inc (incremental mode, SMT only)
-        -save_files : store all CNF files
-        -max_sup : set a maximum support bound for an initial uniform distribution   
-        -true_result=<influence>: expected result for statistics\n";
-        exit;
+  if ($help) {
+    print "        Usage: SearchMC.pl -cl=<cl value> -thres=<threshold value> [options] <input CNF file>\n
+      For example, ./SearchMC.pl -cl=0.9 -thres=2 -verbose=1 test.cnf\n
+      Input Parameters:\n
+      -cl=<cl value>: confidence level value (0 < cl < 1)
+      -thres=<threshold value>: threshold value. The algorithm terminates when the interval is less than this value (0 < thres < output bits)
+      \n
+      Options:\n
+      -term-cond=<termination condition>: set the termination condition with 0 (unprovable soundness, default) or 1 (provable soundness)
+      -input_type=<input file format>: cnf (default), smt 
+      -output_name=<output name>: output variable name (eg. x, y) for projection, SMT only
+      -xor_num_vars=<#variables for a XOR constraint> (0 < numVar < max number of variables)
+      -verbose=<verbose level>: set verbose level; 0, 1(default)
+      -mode=<solver mode>: solver mode; batch (default), inc (incremental mode, SMT only)
+      -save_files : store all CNF files
+      -max_sup : set a maximum support bound for an initial uniform distribution   
+      -true_result=<influence>: expected result for statistics\n";
+    exit;
+  }
+  if ($con_level && $threshold) {
+    if ($con_level <= 0 && $con_level > 1) {
+      die "Confidence level should be 0 < cl < 1";
     }
-    if ($cl && $thres) {
-        if ($cl <= 0 && $cl > 1) {
-			die "Confidence level should be 0 < cl < 1";
-		}
-		if ($thres <= 0 && $thres > $prior_w - $min_sup ) {
-			die "Threshold should be 0 < thres < output bits";
-		}
-    
-    } else {
-        die "cl and thres values needed\n"
+    if ($threshold <= 0 && $threshold > $prior_w - $min_sup ) {
+      die "Threshold should be 0 < thres < output bits";
     }
-    
-    if (not(($mode eq "batch") || ($mode eq "inc"))) {
-        die "Invalid mode: $mode\n";
-    }
-    
-    if($solver eq "cryptominisat") {
+  } else {
+    die "cl and thres values needed\n"
+  }
+  
+  if (not(($mode eq "batch") || ($mode eq "inc"))) {
+    die "Invalid mode: $mode\n";
+  }
+  
+  if($solver eq "cryptominisat") {
 
-    } elsif ($solver eq "z3" || $solver eq "mathsat") {
-		if ($input_type eq "cnf") {
-			die "$solver only supported with SMT-LIB2 formula\n";
-		}
-	} else {
-        die "Invalid solver: $solver\n";
+  } elsif ($solver eq "z3" || $solver eq "mathsat") {
+    if ($input_type eq "cnf") {
+      die "$solver only supported with SMT-LIB2 formula\n";
     }
-    if($verbose < 0 && $verbose > 1) {
-		die "Wrong verbose mode\n";
-	}
-	if ($input_type eq "smt") {
-		if (!@output_names) {
-			die "Output variable should be specified\n";
-		}
-	}
-	if($term_cond < 0 && $term_cond > 1) {
-		die "Wrong termination condition\n";
-	}
+  } else {
+    die "Invalid solver: $solver\n";
+  }
+  if($verbose < 0 && $verbose > 1) {
+    die "Wrong verbose mode\n";
+  }
+  if ($input_type eq "smt") {
+    if (!@output_names) {
+      die "Output variable should be specified\n";
+    }
+  }
+  if($term_cond < 0 && $term_cond > 1) {
+    die "Wrong termination condition\n";
+  }
 }
 
 sub read_cnf_file {
@@ -492,8 +511,8 @@ sub run_solver {
 
     if ($solver eq "cryptominisat") {
 	$solver_pid = open2(*OUT, *IN, 
-          #    "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
-                  "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
+                      "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
+          #          "$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
 	} elsif ($solver eq "z3") {
 		$solver_pid = open2(*OUT, *IN, "$z3 $filename");
 	} elsif ($solver eq "mathsat") {
