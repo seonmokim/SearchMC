@@ -14,7 +14,7 @@ use File::Copy;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
-my $cryptominisat = "./cryptominisat5";
+my $cryptominisat = "./cryptominisat";
 my $z3 ="./z3";
 my $mathsat = "./mathsat";
 my $mathsat_opts =
@@ -118,7 +118,7 @@ my $start = time();
 my $end;
 
 ## Read input file based on input type and solver
-if($input_type eq "smt" && $solver eq "cryptominisat") {
+if($input_type eq "smt" && ($solver eq "cryptominisat" or $solver eq "cryptominisat5")) {
     my $cpid = convert_smt_to_cnf($filename);
     $filename = "./$base_filename.cnf";
     rename "./output_$cpid.cnf", $filename;
@@ -130,7 +130,7 @@ if($input_type eq "smt" && $solver eq "cryptominisat") {
     read_smt_file($filename);
 } elsif ($input_type eq "smt" && $solver eq "z3" && $mode eq "inc") {
     #read_smt_file_inc($filename);
-} elsif ($input_type eq "cnf" && ($solver eq "cryptominisat")) {
+} elsif ($input_type eq "cnf" && ($solver eq "cryptominisat" or $solver eq "cryptominisat5")) {
     read_cnf_file($filename);
     unlink $filename;
 }
@@ -179,7 +179,7 @@ sub SearchMC {
   while ($delta > $thres) {
     my $sub_start = time();
     ($c ,$k) = ComputeCandK($mu, $sigma, $c_max, $numVariables);
-    if($solver eq "cryptominisat") {
+    if($solver eq "cryptominisat" or $solver eq "cryptominisat5") {
         $nSat = MBoundExhaustUpToC_crypto($base_filename, $numVariables, $xor_num_vars, $k, $c, $exhaust_cnt);
     } elsif ($solver eq "z3" || $solver eq "mathsat") {
       if($mode eq "inc") {
@@ -222,12 +222,12 @@ sub SearchMC {
         $sound_lb = $k+log2($nSat)+log2(1-$epsilon);
         $sound_ub = $k+log2($nSat)+log2(1+$epsilon);
       } elsif ($nSat == $c) {
-        $sound_lb = max(0, $k - 2);
+        $sound_lb = max(log2($nSat), log2($nSat) + $k - 3);
       } elsif ($nSat == 0) {
-        $sound_ub = min($k + 2, $prior_w);
+        $sound_ub = min($k + 3, $prior_w);
       } else {
-        $sound_lb = $k+log2($nSat) - 2;
-        $sound_ub = $k+log2($nSat) + 2;
+        $sound_lb = $k+log2($nSat) - 3;
+        $sound_ub = $k+log2($nSat) + 3;
       }
       my $sub_end = time();
     
@@ -372,7 +372,7 @@ sub check_options {
     die "Invalid mode: $mode\n";
   }
   
-  if($solver eq "cryptominisat") {
+  if($solver eq "cryptominisat" or $solver eq "cryptominisat5" ) {
 
   } elsif ($solver eq "z3" || $solver eq "mathsat") {
     if ($input_type eq "cnf") {
@@ -517,8 +517,10 @@ sub run_solver {
   my($filename, $c, $solver) = @_;
   if ($solver eq "cryptominisat") {
     $solver_pid = open2(*OUT, *IN, 
-      "$cryptominisat --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
-    #"$cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
+      "./cryptominisat --nosolprint --gaussuntil=400 --maxsolutions=$c --verbosity=0 $filename | grep 'c SATISFIABLE' | wc -l");
+  } elsif ($solver eq "cryptominisat5") {
+    $solver_pid = open2(*OUT, *IN, 
+      "./cryptominisat5 --maxsol=$c --verb=0 --printsol=0 $filename | grep 's SATISFIABLE' | wc -l");
   } elsif ($solver eq "z3") {
     $solver_pid = open2(*OUT, *IN, "$z3 $filename");
   } elsif ($solver eq "mathsat") {
