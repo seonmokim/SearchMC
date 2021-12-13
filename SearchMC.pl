@@ -254,6 +254,7 @@ sub SearchMC {
       if ($time_out) {
         $end = time();
         if ($end-$start > $time_out) {
+          printf "Maximum $time_out seconds time out: %.f\n", $end-$start;
           last;
         }
       }
@@ -265,7 +266,7 @@ sub SearchMC {
     }
   }
   if(!$save_files) {
-      unlink "$temp_dir/org-$base_filename";
+      unlink "$temp_dir/$$-org-$base_filename";
   }
   unlink "posterior_$$.dat";
   $end = time();
@@ -400,7 +401,7 @@ sub read_cnf_file {
   open(my $fh1, '<:encoding(UTF-8)', $filename)
   or die "Could not open file '$filename' $!";
   
-  open(my $fh2, '>', "$temp_dir/org-$base_filename");
+  open(my $fh2, '>', "$temp_dir/$$-org-$base_filename");
   my @temp;
   while(my $line = <$fh1>) {
     if ($line =~ /^\s*p\s+cnf\s+([0-9]*)\s*([0-9]*)\s*$/) {
@@ -610,9 +611,9 @@ sub xor_tree {
 
 sub add_xor_constraints_crypto {
   my($filename, $xor_num_vars, $xors, $width, $iter) = @_;
-  my $filename_out = "$temp_dir/$iter-$xors-$filename";
-  open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
-  or die "Could not open file '$temp_dir/org-$filename' $!";
+  my $filename_out = "$temp_dir/$$-$iter-$xors-$filename";
+  open(my $fh, '<:encoding(UTF-8)', "$temp_dir/$$-org-$filename")
+  or die "Could not open file '$temp_dir/$$-org-$filename' $!";
   
   open(my $fh1, '>', "$filename_out");
  
@@ -656,16 +657,16 @@ sub add_xor_constraints_crypto {
 
   close $fh1;
   if ($sat_flag == 0) {
-    $filename_out = "unsat";
+    $filename_out = "$$-unsat";
   }
   return $filename_out;
 }
 
 sub add_xor_constraints_smt {
   my($filename, $width, $num_xor_vars, $k, $iter, $output_name) = @_;
-  my $filename_out = "$temp_dir/$iter-$k-$filename";
-  open(my $fh, '<:encoding(UTF-8)', "$temp_dir/org-$filename")
-  or die "Could not open file '$temp_dir/org-$filename' $!";
+  my $filename_out = "$temp_dir/$$-$iter-$k-$filename";
+  open(my $fh, '<:encoding(UTF-8)', "$temp_dir/$$-org-$filename")
+  or die "Could not open file '$temp_dir/$$-org-$filename' $!";
     
   open(my $fh1, '>', "$filename_out");
     
@@ -714,7 +715,7 @@ sub add_xor_constraints_smt {
 
 sub add_neq_constraints_smt {
   my($filename_cons, $filename, $solns, $ce, $iter, $xors, $width,$output_name) = @_;
-  my $filename_out = "$temp_dir/$iter-$xors-$solns-$filename";
+  my $filename_out = "$temp_dir/$$-$iter-$xors-$solns-$filename";
   open(my $fh, '<:encoding(UTF-8)', $filename_cons)
   or die "Could not open file '$filename' $!";
   
@@ -744,7 +745,7 @@ sub MBoundExhaustUpToC_crypto {
   my $solns=0;
   
   my $filename_cons = add_xor_constraints_crypto($filename, $xor_num_vars, $xors, $width, $iter);
-  if ($filename_cons eq "unsat") {
+  if ($filename_cons eq "$$-unsat") {
     return 0;
   } else {
     run_solver($filename_cons, $c, $solver);
